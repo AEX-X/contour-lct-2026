@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Contour">
+  <rect width="512" height="512" rx="112" fill="#2467e8"/>
+  <path d="M388 191c-29-45-77-71-132-71-83 0-150 60-150 136s67 136 150 136c55 0 103-26 132-71l-60-37c-15 24-41 38-72 38-44 0-80-29-80-66s36-66 80-66c31 0 57 14 72 38l60-37Z" fill="#fff"/>
+  <circle cx="256" cy="256" r="22" fill="#9ec5ff"/>
+</svg>

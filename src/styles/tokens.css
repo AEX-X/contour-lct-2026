@@ -1,0 +1,152 @@
+:root {
+  color-scheme: light;
+
+  /* Brand and neutral palette */
+  --color-primary-50: #edf4ff;
+  --color-primary-100: #dceaff;
+  --color-primary-200: #bdd6ff;
+  --color-primary-300: #91bbff;
+  --color-primary-400: #6099fb;
+  --color-primary-500: #3479f2;
+  --color-primary-600: #2467e8;
+  --color-primary-700: #1d55c8;
+  --color-primary-800: #1949ac;
+  --color-primary-900: #173e89;
+
+  --color-navy-950: #071633;
+  --color-navy-900: #0b1f4b;
+  --color-navy-800: #173461;
+  --color-navy-700: #29466f;
+
+  --color-neutral-0: #ffffff;
+  --color-neutral-25: #fbfcfe;
+  --color-neutral-50: #f5f8fc;
+  --color-neutral-100: #eef2f7;
+  --color-neutral-150: #e7ecf3;
+  --color-neutral-200: #d8e1ed;
+  --color-neutral-300: #bec9d8;
+  --color-neutral-400: #8a95a6;
+  --color-neutral-500: #66758f;
+  --color-neutral-600: #52627d;
+  --color-neutral-700: #394b68;
+
+  /* Semantic palette */
+  --color-critical: #d7263d;
+  --color-critical-strong: #b91c2c;
+  --color-critical-soft: #fdecef;
+  --color-critical-border: #f5bec7;
+
+  --color-forecast: #7c3aed;
+  --color-forecast-strong: #6d28d9;
+  --color-forecast-soft: #f2ecff;
+  --color-forecast-border: #d9c7ff;
+
+  --color-warning: #f59e0b;
+  --color-warning-strong: #8a4b00;
+  --color-warning-soft: #fff4e5;
+  --color-warning-border: #f5d6a2;
+
+  --color-success: #20aa60;
+  --color-success-strong: #128141;
+  --color-success-soft: #e9f8f0;
+  --color-success-border: #b7e6ca;
+
+  --color-info: #2467e8;
+  --color-info-strong: #1949ac;
+  --color-info-soft: #eaf2ff;
+  --color-info-border: #bdd6ff;
+
+  --color-missing: #8a95a6;
+  --color-missing-strong: #5e6878;
+  --color-missing-soft: #eef1f5;
+  --color-missing-border: #d3dae4;
+
+  /* Semantic aliases */
+  --color-bg-app: var(--color-neutral-50);
+  --color-bg-subtle: var(--color-neutral-100);
+  --color-surface: var(--color-neutral-0);
+  --color-surface-subtle: var(--color-neutral-25);
+  --color-border: var(--color-neutral-200);
+  --color-border-subtle: var(--color-neutral-150);
+  --color-text-primary: var(--color-navy-900);
+  --color-text-secondary: var(--color-neutral-600);
+  --color-text-muted: var(--color-neutral-500);
+  --color-link: var(--color-primary-700);
+  --color-focus: #1949ac;
+  --color-backdrop: rgba(7, 22, 51, 0.44);
+
+  /* Typography */
+  --font-sans: "Inter", "Segoe UI", Arial, sans-serif;
+  --font-size-2xs: 0.6875rem;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.8125rem;
+  --font-size-md: 0.875rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.125rem;
+  --font-size-2xl: 1.375rem;
+  --font-size-3xl: 1.75rem;
+  --font-size-4xl: 2rem;
+  --line-height-tight: 1.2;
+  --line-height-heading: 1.3;
+  --line-height-body: 1.45;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* 4px spacing system */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* Shape and elevation */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-pill: 999px;
+  --border-width: 1px;
+  --shadow-card: 0 1px 2px rgba(11, 31, 75, 0.06);
+  --shadow-popover: 0 8px 24px rgba(11, 31, 75, 0.12);
+  --shadow-drawer: -8px 0 24px rgba(11, 31, 75, 0.08);
+
+  /* Component geometry */
+  --target-min: 2.75rem;
+  --control-height: 2.75rem;
+  --control-height-lg: 3rem;
+  --header-height: 3.75rem;
+  --sidebar-width: 9.5rem;
+  --sidebar-width-compact: 4.5rem;
+  --context-panel-width: 21rem;
+  --page-gutter: 1.5rem;
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration-normal: 180ms;
+  --duration-slow: 240ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (max-width: 79.99rem) {
+  :root {
+    --sidebar-width: var(--sidebar-width-compact);
+    --context-panel-width: 20rem;
+    --page-gutter: 1.25rem;
+  }
+}
+
+@media (max-width: 47.99rem) {
+  :root {
+    --header-height: 3.5rem;
+    --page-gutter: 1rem;
+    --control-height: 3rem;
+    --control-height-lg: 3rem;
+  }
+}
