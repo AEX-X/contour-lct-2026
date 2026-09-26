@@ -37,6 +37,8 @@ def to_risk_out(risk: Risk) -> RiskOut:
         prediction_window=PredictionWindow(start=risk.prediction_window_start, end=risk.prediction_window_end),
         probability=risk.probability,
         threshold=risk.threshold,
+        alert=risk.alert,
+        model_threshold=risk.model_threshold,
         risk_level=risk.risk_level,
         priority_score=risk.priority_score,
         decision_status=risk.decision_status,

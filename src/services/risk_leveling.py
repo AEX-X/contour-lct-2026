@@ -4,9 +4,16 @@ Reuses reference_data.py's RISK_LEVELS/SLA_PARAMS/FRESHNESS_BOUNDARIES
 (ticket 02) as the single source of truth for thresholds -- never
 re-declares them here.
 """
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from src.services.reference_data import FRESHNESS_BOUNDARIES, RISK_LEVELS, SLA_PARAMS
+from src.services.reference_data import (
+    FRESHNESS_BOUNDARIES,
+    MODEL_ALERT_HIGH_MIN_PROBABILITY,
+    MODEL_ALERT_SLA_HORIZON_FRACTION,
+    RISK_LEVELS,
+    SLA_PARAMS,
+)
 
 _PROBABILITY_WEIGHT = 70.0
 _URGENCY_WEIGHT = 30.0
@@ -41,6 +48,59 @@ def sla_due_at_for_risk_level(risk_level: str, as_of: datetime) -> datetime:
     """
     param = next(p for p in SLA_PARAMS if p.risk_level == risk_level)
     return as_of + timedelta(minutes=param.response_minutes)
+
+
+@dataclass(frozen=True)
+class RiskAssessment:
+    """Level, level boundary and SLA deadline assigned to one forecast."""
+
+    risk_level: str
+    threshold: float
+    sla_due_at: datetime
+
+
+def assess_forecast(
+    probability: float,
+    as_of: datetime,
+    *,
+    alert: bool | None,
+    horizon_hours: float,
+    model_threshold: float | None = None,
+) -> RiskAssessment | None:
+    """Decide whether a forecast becomes a risk, at which level and with which SLA.
+
+    Two rules, chosen by whether the model reported its own alert:
+
+    - `alert` is None (the model does not send it): the shared probability
+      scale of RISK_LEVELS and the per-level SLA_PARAMS, as before.
+    - `alert` is set: the model's own threshold decides. No alert -> no risk.
+      Alert -> "medium", or "high" from MODEL_ALERT_HIGH_MIN_PROBABILITY;
+      "critical" is never produced. SLA is MODEL_ALERT_SLA_HORIZON_FRACTION
+      of the forecast horizon, so the reaction happens before the window.
+
+    Args:
+        probability: The forecast probability in [0, 1].
+        as_of: The forecast's snapshot time.
+        alert: The model's alert flag, or None if the model does not send one.
+        horizon_hours: The forecast horizon (used by the model-alert rule).
+        model_threshold: The model's working threshold, if known.
+
+    Returns:
+        The assessment, or None when the model reported no alert.
+    """
+    if alert is None:
+        risk_level, threshold = risk_level_for_probability(probability)
+        return RiskAssessment(risk_level, threshold, sla_due_at_for_risk_level(risk_level, as_of))
+    if not alert:
+        return None
+
+    if probability >= MODEL_ALERT_HIGH_MIN_PROBABILITY:
+        risk_level, threshold = "high", MODEL_ALERT_HIGH_MIN_PROBABILITY
+    else:
+        # Нижняя граница «Среднего» — сама тревога модели, то есть её порог.
+        risk_level, threshold = "medium", model_threshold if model_threshold is not None else 0.0
+    sla_due_at = as_of + timedelta(hours=horizon_hours * MODEL_ALERT_SLA_HORIZON_FRACTION)
+    return RiskAssessment(risk_level, threshold, sla_due_at)
 
 
 def compute_priority_score(probability: float, as_of: datetime, sla_due_at: datetime, *, now: datetime | None = None) -> float:

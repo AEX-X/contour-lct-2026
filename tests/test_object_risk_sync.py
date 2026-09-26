@@ -132,3 +132,33 @@ async def test_malformed_alert_row_raises_object_risk_error_and_writes_nothing()
         with pytest.raises(ObjectRiskError):
             await sync_object_risks(session, client, now=NOW)
     assert await _risks(tag) == []
+
+
+@pytest.mark.asyncio
+async def test_facility_risks_use_the_model_alert_rule() -> None:
+    tag = "ors_variant_b"
+    await _seed_facilities(tag)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body["target"] == "incident":
+            medium = {**_row(f"{tag}_smoke", True, 0.7, [{"target_id": "sensor_1", "sensor_type": "Датчик дыма"}], "vb-incident"), "threshold": 0.31}
+            high = {**_row(f"{tag}_pump", True, 0.9, [{"target_id": "sensor_2", "sensor_type": "Состояние насоса"}], "vb-incident"), "threshold": 0.31, "model_threshold": 0.652}
+            return httpx.Response(200, json={"horizon_hours": 72, "objects": [medium, high]})
+        failure = {**_row(f"{tag}_quiet", True, 0.95, [], "vb-failure"), "threshold": 0.4}
+        return httpx.Response(200, json={"horizon_hours": 168, "objects": [failure]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle), base_url="http://ml")
+    async with client, async_session_factory() as session:
+        assert await sync_object_risks(session, client, now=NOW) == 3
+
+    risks = {r.target_id: r for r in await _risks(tag)}
+    smoke, pump, quiet = risks[f"fac_{tag}_smoke"], risks[f"fac_{tag}_pump"], risks[f"fac_{tag}_quiet"]
+
+    assert (smoke.risk_level, smoke.threshold, smoke.alert, smoke.model_threshold) == ("medium", 0.31, True, 0.31)
+    assert (pump.risk_level, pump.threshold, pump.model_threshold) == ("high", 0.85, 0.652)
+    assert quiet.risk_level == "high"
+    assert all(r.risk_level != "critical" for r in risks.values())
+
+    assert smoke.sla_due_at - NOW == timedelta(hours=24)  # a third of 72 h
+    assert quiet.sla_due_at - NOW == timedelta(hours=56)  # a third of 168 h

@@ -6,7 +6,13 @@ target_type="facility". A facility that already has an open risk of the
 same model with an unfinished window is skipped, so repeated syncs do not
 duplicate. Any ML-side problem surfaces as ObjectRiskError and nothing is
 committed.
+
+Every created risk carries a model alert, so it is leveled by the
+model-alert rule (`assess_forecast`): "medium", or "high" from 0.85, never
+"critical"; SLA is a third of the horizon (24 h for incidents, 56 h for
+failures) instead of the 15 minutes the shared scale gave to multi-day forecasts.
 """
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -16,13 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.hierarchy import Facility
 from src.models.risk import Risk
+from src.services.ml_predictor_http import parse_model_alert_fields
 from src.services.reference_data import SENSOR_TYPES
-from src.services.risk_leveling import (
-    compute_data_health,
-    compute_priority_score,
-    risk_level_for_probability,
-    sla_due_at_for_risk_level,
-)
+from src.services.risk_leveling import assess_forecast, compute_data_health, compute_priority_score
 
 OBJECT_TARGETS = ("incident", "failure")
 _INCIDENT_RISK_TYPE_BY_SYSTEM_TYPE = {
@@ -110,15 +112,30 @@ async def _has_open_risk(session: AsyncSession, facility_id: str, model: str, no
     return found.scalar_one_or_none() is not None
 
 
-def _parse_alert_row(row: dict) -> tuple[str, str, float, list[str], list[dict]]:
+@dataclass(frozen=True)
+class _AlertRow:
+    facility_id: str
+    model_name: str
+    probability: float
+    model_threshold: float | None
+    factor_texts: list[str]
+    suspects: list[dict]
+
+
+def _parse_alert_row(row: dict) -> _AlertRow:
     # Битая строка ответа ML не должна ронять старт backend: превращаем в ObjectRiskError.
     try:
-        return (
-            f"fac_{row['object_id']}",
-            str(row["model_name"]),
-            float(row["probability"]),
-            [str(factor["text"]) for factor in row.get("top_factors") or []],
-            list(row.get("suspect_channels") or []),
+        _, model_threshold, _ = parse_model_alert_fields(row)
+        if model_threshold is None:
+            # Пока ML не шлёт model_threshold, берём порог из текущего поля threshold ответа /risk_map.
+            _, model_threshold, _ = parse_model_alert_fields({"model_threshold": row.get("threshold")})
+        return _AlertRow(
+            facility_id=f"fac_{row['object_id']}",
+            model_name=str(row["model_name"]),
+            probability=float(row["probability"]),
+            model_threshold=model_threshold,
+            factor_texts=[str(factor["text"]) for factor in row.get("top_factors") or []],
+            suspects=list(row.get("suspect_channels") or []),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ObjectRiskError(f"malformed risk_map row: {row!r}") from exc
@@ -147,14 +164,19 @@ async def sync_object_risks(session: AsyncSession, client: httpx.AsyncClient, *,
         for row in data["objects"]:
             if row.get("status") != "ok" or not row.get("alert"):
                 continue
-            facility_id, model_name, probability, factor_texts, suspects = _parse_alert_row(row)
+            parsed = _parse_alert_row(row)
+            facility_id, model_name, probability = parsed.facility_id, parsed.model_name, parsed.probability
             if await session.get(Facility, facility_id) is None:
                 continue
             if await _has_open_risk(session, facility_id, model_name, now):
                 continue
+            suspects = parsed.suspects
             risk_type = "sensor_failure" if target == "failure" else incident_risk_type(suspects)
-            risk_level, threshold = risk_level_for_probability(probability)
-            sla_due_at = sla_due_at_for_risk_level(risk_level, now)
+            # Строка уже с тревогой модели, поэтому правило по порогу модели всегда даёт оценку.
+            assessment = assess_forecast(
+                probability, now, alert=True, horizon_hours=horizon_hours, model_threshold=parsed.model_threshold
+            )
+            risk_level, threshold, sla_due_at = assessment.risk_level, assessment.threshold, assessment.sla_due_at
             risk_id = f"risk_{uuid4().hex[:20]}"
             session.add(
                 Risk(
@@ -171,13 +193,15 @@ async def sync_object_risks(session: AsyncSession, client: httpx.AsyncClient, *,
                     prediction_window_end=now + timedelta(hours=horizon_hours),
                     probability=probability,
                     threshold=threshold,
+                    alert=True,
+                    model_threshold=parsed.model_threshold,
                     risk_level=risk_level,
                     priority_score=compute_priority_score(probability, now, sla_due_at, now=now),
                     decision_status="open",
                     sla_due_at=sla_due_at,
                     data_health=compute_data_health(now, now=now),
                     model=model_name,
-                    top_factors=factor_texts,
+                    top_factors=parsed.factor_texts,
                     recommendation=recommendation_for(target, suspects),
                     version=1,
                     created_at=now,

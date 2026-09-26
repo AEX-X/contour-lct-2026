@@ -6,6 +6,8 @@ deploy it fully independently; swapping the backend from StubPredictor to
 this implementation requires no backend code change (see
 `ml_predictor_factory.py`).
 """
+import math
+
 import httpx
 
 from src.services.ml_port import PredictionInput, PredictionResult
@@ -13,6 +15,40 @@ from src.services.ml_port import PredictionInput, PredictionResult
 
 class MLPredictorError(Exception):
     """Raised when the external ML service fails or returns a malformed response."""
+
+
+def _optional_number(data: dict, key: str) -> float | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    # bool is an int subclass in Python; true/false is not a threshold or horizon.
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"{key} must be a finite number, got {value!r}")
+    return float(value)
+
+
+def parse_model_alert_fields(data: dict) -> tuple[bool | None, float | None, float | None]:
+    """Read the optional model-alert fields agreed with the ML team.
+
+    Args:
+        data: A decoded forecast object from the ML service.
+
+    Returns:
+        (alert, model_threshold, horizon_hours); an absent key or JSON null
+        gives None, meaning "not provided by this model".
+
+    Raises:
+        ValueError: A field is present with the wrong type, or horizon_hours
+            is not positive.
+    """
+    alert = data.get("alert")
+    if alert is not None and not isinstance(alert, bool):
+        raise ValueError(f"alert must be a boolean, got {alert!r}")
+    model_threshold = _optional_number(data, "model_threshold")
+    horizon_hours = _optional_number(data, "horizon_hours")
+    if horizon_hours is not None and horizon_hours <= 0:
+        raise ValueError(f"horizon_hours must be positive, got {horizon_hours!r}")
+    return alert, model_threshold, horizon_hours
 
 
 class HttpMLPredictor:
@@ -58,6 +94,7 @@ class HttpMLPredictor:
 
         try:
             data = response.json()
+            alert, model_threshold, horizon_hours = parse_model_alert_fields(data)
             return PredictionResult(
                 probability=float(data["probability"]),
                 lead_min_hours=float(data["lead_min_hours"]),
@@ -65,6 +102,9 @@ class HttpMLPredictor:
                 top_factors=list(data["top_factors"]),
                 recommendation=str(data["recommendation"]),
                 model_name=str(data["model_name"]),
+                alert=alert,
+                model_threshold=model_threshold,
+                horizon_hours=horizon_hours,
             )
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise MLPredictorError(f"malformed ML predictor response: {response.text}") from exc

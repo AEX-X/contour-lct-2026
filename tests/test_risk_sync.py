@@ -190,3 +190,75 @@ async def test_ml_error_for_one_channel_skips_only_that_channel() -> None:
     async with async_session_factory() as session:
         again = (await session.execute(select(Risk).where(Risk.target_id == f"sensor_{healthy}"))).scalars().all()
     assert len(again) == 1
+
+
+class _ModelAlertPredictor:
+    """Per-sensor scripted forecasts, recording which sensors were asked."""
+
+    def __init__(self, results: dict[str, PredictionResult]) -> None:
+        self.results = results
+        self.asked: list[str] = []
+
+    async def predict(self, prediction_input: PredictionInput) -> PredictionResult:
+        self.asked.append(prediction_input.target_id)
+        return self.results.get(prediction_input.target_id, _fixed_result())
+
+
+def _alert_result(probability: float, alert: bool, horizon_hours: float | None = 24.0) -> PredictionResult:
+    return PredictionResult(
+        probability=probability, lead_min_hours=0.0, prediction_window_hours=6.0, top_factors=["f"],
+        recommendation="r", model_name="alert-model", alert=alert, model_threshold=0.147, horizon_hours=horizon_hours,
+    )
+
+
+async def _sensor_risks(sensor_id: str) -> list[Risk]:
+    async with async_session_factory() as session:
+        return list((await session.execute(select(Risk).where(Risk.target_id == sensor_id))).scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_model_alert_rule_in_sensor_sync() -> None:
+    names = ("vb_no_alert", "vb_medium", "vb_high", "vb_no_horizon", "vb_shared_scale")
+    sensors = {}
+    base = datetime(2036, 4, 1, tzinfo=timezone.utc)
+    for i, name in enumerate(names):
+        channel_id = await _seed_channel(name, "fac_risk_sync_variant_b")
+        sensors[name] = f"sensor_{channel_id}"
+        await _add_reading(channel_id, base + timedelta(minutes=i), name)
+
+    predictor = _ModelAlertPredictor(
+        {
+            sensors["vb_no_alert"]: _alert_result(0.9, alert=False),
+            sensors["vb_medium"]: _alert_result(0.2, alert=True),
+            sensors["vb_high"]: _alert_result(0.9, alert=True),
+            sensors["vb_no_horizon"]: _alert_result(0.2, alert=True, horizon_hours=None),
+            sensors["vb_shared_scale"]: _fixed_result(),  # no alert field: shared scale, 0.5 -> medium
+        }
+    )
+    now = base + timedelta(hours=1)
+    async with async_session_factory() as session:
+        await sync_risks(session, predictor, now=now)
+
+    assert await _sensor_risks(sensors["vb_no_alert"]) == [], "no model alert -> no risk"
+
+    [medium] = await _sensor_risks(sensors["vb_medium"])
+    assert (medium.risk_level, medium.threshold, medium.alert, medium.model_threshold) == ("medium", 0.147, True, 0.147)
+    assert medium.sla_due_at == now + timedelta(hours=8)  # a third of the 24 h horizon
+    assert medium.horizon_hours == 24.0
+
+    [high] = await _sensor_risks(sensors["vb_high"])
+    assert (high.risk_level, high.threshold) == ("high", 0.85)
+    assert high.sla_due_at == now + timedelta(hours=8)
+
+    [no_horizon] = await _sensor_risks(sensors["vb_no_horizon"])
+    assert no_horizon.sla_due_at == now + timedelta(hours=2)  # falls back to prediction_window_hours = 6
+
+    [shared] = await _sensor_risks(sensors["vb_shared_scale"])
+    assert (shared.risk_level, shared.threshold, shared.alert) == ("medium", 0.3, None)
+    assert shared.sla_due_at == now + timedelta(hours=4)  # SLA_PARAMS for "medium"
+
+    # A channel without an alert is not asked again on the next sync.
+    predictor.asked.clear()
+    async with async_session_factory() as session:
+        await sync_risks(session, predictor, now=now + timedelta(hours=1))
+    assert sensors["vb_no_alert"] not in predictor.asked

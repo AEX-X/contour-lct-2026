@@ -2606,7 +2606,7 @@
           },
           "duration_seconds": {
             "type": "number",
-            "exclusiveMinimum": 0,
+            "exclusiveMinimum": 0.0,
             "title": "Duration Seconds"
           }
         },
@@ -3201,6 +3201,50 @@
         "title": "MissingInterval",
         "description": "A gap in the numeric series longer than the MVP heuristic bound."
       },
+      "ModelAlertRule": {
+        "properties": {
+          "applies_when": {
+            "type": "string",
+            "title": "Applies When"
+          },
+          "without_alert": {
+            "type": "string",
+            "title": "Without Alert"
+          },
+          "medium": {
+            "type": "string",
+            "title": "Medium"
+          },
+          "high_min_probability": {
+            "type": "number",
+            "title": "High Min Probability"
+          },
+          "sla_horizon_fraction": {
+            "type": "number",
+            "title": "Sla Horizon Fraction"
+          },
+          "produces_critical": {
+            "type": "boolean",
+            "title": "Produces Critical"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "applies_when",
+          "without_alert",
+          "medium",
+          "high_min_probability",
+          "sla_horizon_fraction",
+          "produces_critical",
+          "description"
+        ],
+        "title": "ModelAlertRule",
+        "description": "How a risk is leveled when the forecast carries the model's own alert.\n\nApplies instead of `risk_levels`/`sla_params` for such forecasts; a risk\nshows which rule was used through its `alert` field (null = shared scale)."
+      },
       "NumericPoint": {
         "properties": {
           "timestamp": {
@@ -3363,6 +3407,9 @@
             "type": "array",
             "title": "Sla Params"
           },
+          "model_alert_rule": {
+            "$ref": "#/components/schemas/ModelAlertRule"
+          },
           "freshness_boundaries": {
             "items": {
               "$ref": "#/components/schemas/FreshnessBoundary"
@@ -3383,6 +3430,7 @@
           "work_order_statuses",
           "decision_statuses",
           "sla_params",
+          "model_alert_rule",
           "freshness_boundaries"
         ],
         "title": "ReferenceConfig",
@@ -3570,6 +3618,28 @@
           "threshold": {
             "type": "number",
             "title": "Threshold"
+          },
+          "alert": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alert"
+          },
+          "model_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Threshold"
           },
           "risk_level": {
             "type": "string",

@@ -31,7 +31,19 @@ class PredictionInput:
 
 @dataclass(frozen=True)
 class PredictionResult:
-    """A predictor's forecast for one PredictionInput."""
+    """A predictor's forecast for one PredictionInput.
+
+    The last three fields are optional and agreed with the ML team: when a
+    forecast carries `alert`, the risk level is derived from the model's own
+    threshold instead of the shared probability scale, and the SLA from the
+    forecast horizon. Predictors that do not send them (StubPredictor, older
+    ML services) keep the shared scale.
+
+    Attributes:
+        alert: Whether the model itself raised an alert for this target.
+        model_threshold: The model's working threshold behind `alert`.
+        horizon_hours: Forecast horizon; falls back to prediction_window_hours.
+    """
 
     probability: float
     lead_min_hours: float
@@ -39,6 +51,9 @@ class PredictionResult:
     top_factors: list[str]
     recommendation: str
     model_name: str
+    alert: bool | None = None
+    model_threshold: float | None = None
+    horizon_hours: float | None = None
 
 
 class MLPredictor(Protocol):

@@ -32,6 +32,8 @@ class RiskOut(BaseModel):
     prediction_window: PredictionWindow
     probability: float
     threshold: float
+    alert: bool | None = None
+    model_threshold: float | None = None
     risk_level: str
     priority_score: float
     decision_status: str

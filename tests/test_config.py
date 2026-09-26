@@ -61,3 +61,26 @@ async def test_config_enum_ids_are_snake_case() -> None:
             assert SNAKE_CASE.match(item["id"]), f"{field} id not snake_case: {item['id']}"
     for state in data["sensor_states"]:
         assert SNAKE_CASE.match(state), f"sensor_states value not snake_case: {state}"
+
+
+@pytest.mark.asyncio
+async def test_config_exposes_the_model_alert_rule_the_code_uses() -> None:
+    from src.services import reference_data
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        data = (await client.get("/api/v1/config")).json()["data"]
+
+    rule = data["model_alert_rule"]
+    assert rule["high_min_probability"] == reference_data.MODEL_ALERT_HIGH_MIN_PROBABILITY == 0.85
+    assert rule["sla_horizon_fraction"] == pytest.approx(reference_data.MODEL_ALERT_SLA_HORIZON_FRACTION)
+    assert rule["sla_horizon_fraction"] == pytest.approx(1 / 3)
+    assert rule["produces_critical"] is False
+    assert rule["description"]
+
+    # The shared scale is still published unchanged for forecasts without a model alert.
+    assert data["risk_levels"] == [level.model_dump() for level in reference_data.RISK_LEVELS]
+    assert data["sla_params"] == [param.model_dump() for param in reference_data.SLA_PARAMS]
+    assert [(p["risk_level"], p["response_minutes"]) for p in data["sla_params"]] == [
+        ("low", 1440), ("medium", 240), ("high", 60), ("critical", 15),
+    ]

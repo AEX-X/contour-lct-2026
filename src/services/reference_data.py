@@ -10,6 +10,7 @@ documented here rather than duplicated inline at the call site.
 from src.schemas.reference import (
     DecisionStatus,
     FreshnessBoundary,
+    ModelAlertRule,
     ReferenceConfig,
     RejectReason,
     RiskLevelThreshold,
@@ -112,6 +113,27 @@ SLA_PARAMS: list[SlaParam] = [
     SlaParam(risk_level="critical", response_minutes=15),
 ]
 
+# Model-alert rule (agreed with the ML team): used when a forecast carries the
+# model's own `alert`. Without an alert no risk is created; with it the level is
+# "medium", or "high" from this probability; SLA is this fraction of the horizon.
+MODEL_ALERT_HIGH_MIN_PROBABILITY = 0.85
+MODEL_ALERT_SLA_HORIZON_FRACTION = 1 / 3
+
+MODEL_ALERT_RULE = ModelAlertRule(
+    applies_when="прогноз содержит признак тревоги модели (alert); у такого риска поле alert не null",
+    without_alert="риск не создаётся",
+    medium="тревога модели при вероятности ниже high_min_probability",
+    high_min_probability=MODEL_ALERT_HIGH_MIN_PROBABILITY,
+    sla_horizon_fraction=MODEL_ALERT_SLA_HORIZON_FRACTION,
+    produces_critical=False,
+    description=(
+        "Уровень считается от порога модели: без тревоги риска нет, с тревогой — «Средний», "
+        "с вероятности high_min_probability — «Высокий»; «Критический» не выдаётся. "
+        "SLA = sla_horizon_fraction от горизонта прогноза. Прогнозы без признака тревоги "
+        "используют шкалу risk_levels и sla_params."
+    ),
+)
+
 FRESHNESS_BOUNDARIES: list[FreshnessBoundary] = [
     FreshnessBoundary(id="fresh", display_name="Актуально", max_age_seconds=5 * 60),
     FreshnessBoundary(id="delayed", display_name="Задержка", max_age_seconds=15 * 60),
@@ -138,5 +160,6 @@ def get_reference_config() -> ReferenceConfig:
         work_order_statuses=WORK_ORDER_STATUSES,
         decision_statuses=DECISION_STATUSES,
         sla_params=SLA_PARAMS,
+        model_alert_rule=MODEL_ALERT_RULE,
         freshness_boundaries=FRESHNESS_BOUNDARIES,
     )

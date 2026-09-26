@@ -6,7 +6,7 @@ left as an honest placeholder.
 """
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base
@@ -31,7 +31,11 @@ class Risk(Base):
     prediction_window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     prediction_window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     probability: Mapped[float] = mapped_column(Float)
+    # Lower bound of risk_level (the frontend contract's meaning), not the model's threshold.
     threshold: Mapped[float] = mapped_column(Float)
+    # Model-side alert and its threshold; None when the model did not send them (shared scale).
+    alert: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    model_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
     risk_level: Mapped[str] = mapped_column(String, index=True)
     priority_score: Mapped[float] = mapped_column(Float, index=True)
     decision_status: Mapped[str] = mapped_column(String, default="open", index=True)

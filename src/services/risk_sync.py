@@ -10,6 +10,11 @@ A predictor error for one group (e.g. the ML service answering 422
 "insufficient_data" for a channel, or being unreachable) skips only that
 group: the cursor still advances, so startup never fails because of the
 ML service and a group is not retried in a loop.
+
+Level and SLA come from `assess_forecast`: when the forecast carries the
+model's own `alert`, a group without an alert gets no risk (cursor still
+advances) and an alerted one is leveled by the model-alert rule; otherwise
+the shared probability scale applies.
 """
 import logging
 from collections import defaultdict
@@ -25,12 +30,7 @@ from src.models.sensor import SensorChannel
 from src.services.event_sync import sync_events
 from src.services.ml_port import MLPredictor, PredictionInput
 from src.services.ml_predictor_http import MLPredictorError
-from src.services.risk_leveling import (
-    compute_data_health,
-    compute_priority_score,
-    risk_level_for_probability,
-    sla_due_at_for_risk_level,
-)
+from src.services.risk_leveling import assess_forecast, compute_data_health, compute_priority_score
 
 _BATCH_SIZE = 2000
 
@@ -82,6 +82,7 @@ async def sync_risks(session: AsyncSession, predictor: MLPredictor, *, now: date
 
     created_count = 0
     skipped_count = 0
+    no_alert_count = 0
     last_error: MLPredictorError | None = None
     while True:
         rows = (
@@ -131,8 +132,19 @@ async def sync_risks(session: AsyncSession, predictor: MLPredictor, *, now: date
                 last_error = exc
                 continue
 
-            risk_level, threshold = risk_level_for_probability(prediction.probability)
-            sla_due_at = sla_due_at_for_risk_level(risk_level, now)
+            horizon_hours = prediction.horizon_hours or prediction.prediction_window_hours
+            assessment = assess_forecast(
+                prediction.probability,
+                now,
+                alert=prediction.alert,
+                horizon_hours=horizon_hours,
+                model_threshold=prediction.model_threshold,
+            )
+            if assessment is None:
+                # Модель не подняла тревогу: риска нет, курсор всё равно сдвинется.
+                no_alert_count += 1
+                continue
+            risk_level, threshold, sla_due_at = assessment.risk_level, assessment.threshold, assessment.sla_due_at
             priority_score = compute_priority_score(prediction.probability, now, sla_due_at, now=now)
             data_health = compute_data_health(now, now=now)
             window_start = now + timedelta(hours=prediction.lead_min_hours)
@@ -149,11 +161,13 @@ async def sync_risks(session: AsyncSession, predictor: MLPredictor, *, now: date
                     facility_id=channel.facility_id,
                     as_of=now,
                     lead_min_hours=prediction.lead_min_hours,
-                    horizon_hours=prediction.prediction_window_hours,
+                    horizon_hours=horizon_hours,
                     prediction_window_start=window_start,
                     prediction_window_end=window_end,
                     probability=prediction.probability,
                     threshold=threshold,
+                    alert=prediction.alert,
+                    model_threshold=prediction.model_threshold,
                     risk_level=risk_level,
                     priority_score=priority_score,
                     decision_status="open",
@@ -177,6 +191,8 @@ async def sync_risks(session: AsyncSession, predictor: MLPredictor, *, now: date
         if len(rows) < _BATCH_SIZE:
             break
 
+    if no_alert_count:
+        logger.info("risk sync: %d sensor group(s) without a model alert, no risk created", no_alert_count)
     if skipped_count:
         logger.warning(
             "risk sync: %d sensor group(s) skipped because the ML predictor failed; last error: %s",

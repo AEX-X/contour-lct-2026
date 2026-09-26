@@ -81,6 +81,22 @@ class FreshnessBoundary(BaseModel):
     max_age_seconds: Optional[int]
 
 
+class ModelAlertRule(BaseModel):
+    """How a risk is leveled when the forecast carries the model's own alert.
+
+    Applies instead of `risk_levels`/`sla_params` for such forecasts; a risk
+    shows which rule was used through its `alert` field (null = shared scale).
+    """
+
+    applies_when: str
+    without_alert: str
+    medium: str
+    high_min_probability: float
+    sla_horizon_fraction: float
+    produces_critical: bool
+    description: str
+
+
 class ReferenceConfig(BaseModel):
     """The complete reference/config bundle the frontend must not hardcode."""
 
@@ -94,4 +110,5 @@ class ReferenceConfig(BaseModel):
     work_order_statuses: list[WorkOrderStatus]
     decision_statuses: list[DecisionStatus]
     sla_params: list[SlaParam]
+    model_alert_rule: ModelAlertRule
     freshness_boundaries: list[FreshnessBoundary]
