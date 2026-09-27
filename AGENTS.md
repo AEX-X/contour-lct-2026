@@ -14,5 +14,7 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Primary visual target: `design/reference-manager-overview-selected.png`
 - Visual direction: light map-first executive command center with navy typography, cobalt actions, three top KPIs, a compact left rail, a right-side attention queue, and a selected-facility context panel
 - Frontend is demo-first and backend-independent: use one typed mock repository and one shared domain state across all five roles
+- Real backend integration uses an explicit `api` runtime mode and a separate typed repository. Keep `mock` as the safe default and never silently mix API and synthetic entities
+- In API mode, unsupported server actions stay unavailable instead of being simulated as successful; every absent or demonstration-only value must remain visibly labelled
 - Build the complete P0 vertical journey before expanding P1; keep P2 out of the critical path
 - Real operational, geometry, financial, and repair data is currently unavailable, so synthetic fixtures must be visibly labeled as demo data

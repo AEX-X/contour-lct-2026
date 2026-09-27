@@ -1,11 +1,11 @@
-import { ArrowsClockwise, Cloud, CloudSlash, UserCircle } from "@phosphor-icons/react";
+import { ArrowsClockwise, Cloud, CloudSlash, Database, SignOut, UserCircle } from "@phosphor-icons/react";
 import { useState } from "react";
 import { Button, InlineAlert, Modal, StatusBadge } from "../shared/ui";
 import { useContour } from "../app/ContourProvider";
 import { roleLabels } from "../app/labels";
 
 export function SettingsPage() {
-  const { currentUser, isOnline, setIsOnline, resetDemo } = useContour();
+  const { currentUser, runtime, isOnline, setIsOnline, resetDemo, signOut } = useContour();
   const [resetting, setResetting] = useState(false);
   const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -26,8 +26,8 @@ export function SettingsPage() {
     <div className="page">
       <header className="page-header">
         <div>
-          <h1>Профиль и демо-настройки</h1>
-          <p className="page-header__meta">Параметры текущей демонстрационной сессии</p>
+          <h1>Профиль и настройки</h1>
+          <p className="page-header__meta">Параметры текущей {runtime.mode === "api" ? "backend-сессии" : "демонстрационной сессии"}</p>
         </div>
       </header>
       <div className="split-layout">
@@ -43,11 +43,13 @@ export function SettingsPage() {
               <dt>Область доступа</dt><dd>{currentUser.scope.type}</dd>
               <dt>Часовой пояс</dt><dd>{currentUser.timezone}</dd>
               <dt>Разрешений</dt><dd>{currentUser.permissions.length}</dd>
+              <dt>Источник данных</dt><dd>{runtime.label}</dd>
+              {runtime.apiBaseUrl ? <><dt>API</dt><dd><code>{runtime.apiBaseUrl}</code></dd></> : null}
             </dl>
           </div>
         </section>
         <aside className="content-stack">
-          <section className="surface">
+          {runtime.supportsOfflineSimulation ? <section className="surface">
             <header className="surface__header"><h2>Имитация сети</h2></header>
             <div className="surface__body content-stack">
               <StatusBadge tone={isOnline ? "success" : "warning"}>
@@ -62,26 +64,38 @@ export function SettingsPage() {
                 Переключить в {isOnline ? "офлайн" : "онлайн"}
               </Button>
             </div>
-          </section>
-          <InlineAlert tone="warning" title="Сброс демонстрации">
-            Удалит изменения заявок и вернёт исходный сценарий. Это действие относится только к локальному прототипу
-          </InlineAlert>
-          {resetError ? (
-            <InlineAlert tone="critical" title="Не удалось завершить сброс">
-              {resetError}
+          </section> : (
+            <InlineAlert tone="info" title="Реальный API-контур" icon={Database}>
+              Права и область доступа получены из backend. Недоступные серверные операции не эмулируются в этом режиме
             </InlineAlert>
-          ) : null}
-          <Button
-            variant="danger"
-            startIcon={<ArrowsClockwise size={18} />}
-            loading={resetting}
-            onClick={() => setResetConfirmationOpen(true)}
-          >
-            Сбросить сценарий
-          </Button>
+          )}
+          {runtime.supportsDemoReset ? (
+            <>
+              <InlineAlert tone="warning" title="Сброс демонстрации">
+                Удалит изменения заявок и вернёт исходный сценарий. Это действие относится только к локальному прототипу
+              </InlineAlert>
+              {resetError ? (
+                <InlineAlert tone="critical" title="Не удалось завершить сброс">
+                  {resetError}
+                </InlineAlert>
+              ) : null}
+              <Button
+                variant="danger"
+                startIcon={<ArrowsClockwise size={18} />}
+                loading={resetting}
+                onClick={() => setResetConfirmationOpen(true)}
+              >
+                Сбросить сценарий
+              </Button>
+            </>
+          ) : (
+            <Button variant="secondary" startIcon={<SignOut size={18} />} onClick={() => void signOut()}>
+              Выйти из backend
+            </Button>
+          )}
         </aside>
       </div>
-      <Modal
+      {runtime.supportsDemoReset ? <Modal
         open={resetConfirmationOpen}
         onClose={() => !resetting && setResetConfirmationOpen(false)}
         title="Сбросить демонстрационный сценарий?"
@@ -96,7 +110,7 @@ export function SettingsPage() {
         }
       >
         <p>Будут удалены локальные изменения заявок, офлайн-пакеты и несинхронизированные отчёты инженера. Затем восстановятся исходные демо-данные</p>
-      </Modal>
+      </Modal> : null}
     </div>
   );
 }

@@ -59,6 +59,105 @@
   color: var(--color-text-secondary, #52627d);
 }
 
+.api-login-shell {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(circle at 12% 12%, rgb(36 103 232 / 12%), transparent 32%),
+    linear-gradient(145deg, #f8faff 0%, #edf3fb 100%);
+}
+
+.api-login-card {
+  display: grid;
+  width: min(100%, 460px);
+  gap: 20px;
+  padding: clamp(24px, 5vw, 40px);
+  border: 1px solid var(--color-border, #d8e1ed);
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgb(11 31 75 / 14%);
+}
+
+.api-login-brand {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 14px;
+  color: #fff;
+  background: var(--color-primary-600, #2467e8);
+  font-size: 22px;
+  font-weight: 750;
+}
+
+.api-login-card h1 {
+  margin: 0 0 8px;
+  color: var(--color-text-primary, #0b1f4b);
+  font-size: clamp(26px, 5vw, 34px);
+}
+
+.api-login-card p {
+  margin: 0;
+  color: var(--color-text-secondary, #52627d);
+  line-height: 1.55;
+}
+
+.api-login-meta {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--color-surface-subtle, #f0f4fa);
+}
+
+.api-login-meta > div {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.api-login-meta dt {
+  color: var(--color-text-muted, #66758f);
+}
+
+.api-login-meta dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary, #0b1f4b);
+  font-weight: 600;
+}
+
+.api-login-form {
+  display: grid;
+  gap: 16px;
+}
+
+.api-password-field {
+  position: relative;
+}
+
+.api-password-field > svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  color: var(--color-text-muted, #66758f);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.api-password-field input {
+  width: 100%;
+  padding-left: 40px;
+}
+
+.api-login-hint {
+  font-size: 12px;
+}
+
 .app-header {
   grid-area: header;
   position: sticky;
@@ -253,6 +352,12 @@
   white-space: nowrap;
 }
 
+.demo-badge[data-mode="api"] {
+  border-color: #b7dfca;
+  color: #17663b;
+  background: #e9f8f0;
+}
+
 .icon-button,
 .row-action {
   position: relative;
@@ -345,6 +450,20 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.profile-popover__session {
+  display: grid;
+  gap: 3px;
+  margin: 0 8px 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-surface-subtle, #f0f4fa);
+}
+
+.profile-popover__session small {
+  color: var(--color-text-muted, #66758f);
+  line-height: 1.4;
 }
 
 .profile-popover__option {

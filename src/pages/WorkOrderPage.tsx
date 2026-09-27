@@ -29,7 +29,7 @@ type DialogAction = "return_for_rework" | "close" | "cancel" | "resubmit_clarifi
 export function WorkOrderPage() {
   const { workOrderId } = useParams();
   const navigate = useNavigate();
-  const { repository, currentUser, profiles, invalidateAll } = useContour();
+  const { repository, runtime, currentUser, profiles, invalidateAll } = useContour();
   const commandMeta = useRepositoryCommandMeta();
   const orderQuery = useWorkOrder(workOrderId);
   const facilityQuery = useFacility(orderQuery.data?.target.facilityId);
@@ -329,7 +329,7 @@ export function WorkOrderPage() {
                   Следующий шаг выполняет другая роль согласно процессу
                 </InlineAlert>
               ) : null}
-              {order.status !== "closed" && ["maintenance_coordinator", "manager"].includes(currentUser.role) ? (
+              {runtime.mode === "mock" && order.status !== "closed" && ["maintenance_coordinator", "manager"].includes(currentUser.role) ? (
                 <Link className="ui-button ui-button--secondary ui-button--medium ui-button--full-width" to={`/maintenance/queue?workOrder=${order.id}`}>
                   Открыть в ремонтной очереди
                   <ArrowRight size={18} />

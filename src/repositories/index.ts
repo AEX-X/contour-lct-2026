@@ -1,4 +1,5 @@
 export * from '../domain'
 export * from './ContourRepository'
+export * from './ApiContourRepository'
 export * from './MockContourRepository'
 export * from './memoryStorage'

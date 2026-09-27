@@ -276,7 +276,7 @@ export interface RiskForecast {
   severity: RiskSeverity
   horizonHours: number
   status: RiskStatus
-  topFactors: Array<{ label: string; contribution: number; direction: 'up' | 'down' }>
+  topFactors: Array<{ label: string; contribution: number | null; direction: 'up' | 'down' }>
   recommendation: string
   createdAt: ISODateTime
   expiresAt: ISODateTime
@@ -642,6 +642,7 @@ export interface RiskDecisionCommand extends MutationMeta {
 }
 
 export type RepositoryErrorCode =
+  | 'AUTH_REQUIRED'
   | 'VALIDATION_ERROR'
   | 'FORBIDDEN'
   | 'NOT_FOUND'

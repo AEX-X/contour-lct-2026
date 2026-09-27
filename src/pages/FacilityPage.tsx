@@ -97,6 +97,16 @@ export function FacilityPage({
     }),
     onSuccess: () => invalidateAll(),
   });
+  const acknowledgeRiskMutation = useMutation({
+    mutationFn: (risk: RiskForecast) => {
+      if (!repository.acknowledgeRisk) throw new Error("Принятие прогноза в работу недоступно");
+      return repository.acknowledgeRisk(risk.id, {
+        ...commandMeta(risk.version, `${risk.id}:${risk.version}:acknowledge`),
+        comment: "Прогноз принят диспетчером в работу",
+      });
+    },
+    onSuccess: () => invalidateAll(),
+  });
 
   const risks = risksQuery.data ?? [];
   const incidents = incidentsQuery.data ?? [];
@@ -282,6 +292,13 @@ export function FacilityPage({
                 : "Повтори действие"}
             </InlineAlert>
           ) : null}
+          {acknowledgeRiskMutation.isError ? (
+            <InlineAlert tone="critical" title="Не удалось принять прогноз в работу">
+              {acknowledgeRiskMutation.error instanceof Error
+                ? acknowledgeRiskMutation.error.message
+                : "Повтори действие"}
+            </InlineAlert>
+          ) : null}
           {["overview", "risks"].includes(section) && (activeRisks.length ? (
             section === "risks" ? (
               <div className="content-stack" aria-label="Прогнозные риски объекта">
@@ -291,9 +308,12 @@ export function FacilityPage({
                     risk={risk}
                     canCreate={canCreate}
                     canConfirm={currentUser.permissions.includes("risk.confirm")}
+                    canAcknowledge={Boolean(repository.acknowledgeRisk) && currentUser.permissions.includes("risk.acknowledge")}
                     confirming={confirmRiskMutation.isPending && confirmRiskMutation.variables?.id === risk.id}
+                    acknowledging={acknowledgeRiskMutation.isPending && acknowledgeRiskMutation.variables?.id === risk.id}
                     hasIncident={incidents.some((incident) => incident.sourceRiskId === risk.id && incident.status !== "resolved")}
                     onConfirm={() => confirmRiskMutation.mutate(risk)}
+                    onAcknowledge={() => acknowledgeRiskMutation.mutate(risk)}
                     onCreate={() => {
                       setSelectedRiskId(risk.id);
                       setSelectedTargetKey(`${risk.target.type}:${risk.target.id}`);
@@ -307,9 +327,12 @@ export function FacilityPage({
                 risk={topRisk}
                 canCreate={canCreate}
                 canConfirm={currentUser.permissions.includes("risk.confirm")}
+                canAcknowledge={Boolean(repository.acknowledgeRisk) && currentUser.permissions.includes("risk.acknowledge")}
                 confirming={confirmRiskMutation.isPending && confirmRiskMutation.variables?.id === topRisk.id}
+                acknowledging={acknowledgeRiskMutation.isPending && acknowledgeRiskMutation.variables?.id === topRisk.id}
                 hasIncident={incidents.some((incident) => incident.sourceRiskId === topRisk.id && incident.status !== "resolved")}
                 onConfirm={() => confirmRiskMutation.mutate(topRisk)}
+                onAcknowledge={() => acknowledgeRiskMutation.mutate(topRisk)}
                 onCreate={() => {
                   setSelectedRiskId(topRisk.id);
                   setSelectedTargetKey(`${topRisk.target.type}:${topRisk.target.id}`);
@@ -542,17 +565,23 @@ function RiskPanel({
   risk,
   canCreate,
   canConfirm,
+  canAcknowledge,
   confirming,
+  acknowledging,
   hasIncident,
   onConfirm,
+  onAcknowledge,
   onCreate,
 }: {
   risk: RiskForecast;
   canCreate: boolean;
   canConfirm: boolean;
+  canAcknowledge: boolean;
   confirming: boolean;
+  acknowledging: boolean;
   hasIncident: boolean;
   onConfirm: () => void;
+  onAcknowledge: () => void;
   onCreate: () => void;
 }) {
   return (
@@ -573,9 +602,17 @@ function RiskPanel({
             <strong>{riskSeverityLabels[risk.severity]} риск</strong>
             <p className="muted">{risk.recommendation}</p>
           </div>
-          {risk.status === "confirmed" && hasIncident && canCreate ? (
+          {((risk.status === "confirmed" && hasIncident) || risk.status === "acknowledged") && canCreate ? (
             <Button startIcon={<Plus size={18} />} onClick={onCreate}>
               Создать заявку
+            </Button>
+          ) : risk.status === "new" && canAcknowledge ? (
+            <Button
+              startIcon={<CheckCircle size={18} />}
+              loading={acknowledging}
+              onClick={onAcknowledge}
+            >
+              Принять в работу
             </Button>
           ) : risk.status !== "confirmed" && canConfirm ? (
             <Button
@@ -585,6 +622,8 @@ function RiskPanel({
             >
               Подтвердить прогноз
             </Button>
+          ) : risk.status === "acknowledged" ? (
+            <StatusBadge tone="info">Принят в работу</StatusBadge>
           ) : risk.status === "confirmed" ? (
             <StatusBadge tone="success">Инцидент зарегистрирован</StatusBadge>
           ) : null}
@@ -593,10 +632,16 @@ function RiskPanel({
           {risk.topFactors.slice(0, 4).map((factor) => (
             <li key={factor.label}>
               <span>{factor.label}</span>
-              <span className="factor-bar" aria-hidden="true">
-                <span style={{ width: `${Math.round(factor.contribution * 100)}%` }} />
-              </span>
-              <strong>{formatPercent(factor.contribution)}</strong>
+              {factor.contribution === null ? (
+                <span className="muted">Без числовой оценки вклада</span>
+              ) : (
+                <>
+                  <span className="factor-bar" aria-hidden="true">
+                    <span style={{ width: `${Math.round(factor.contribution * 100)}%` }} />
+                  </span>
+                  <strong>{formatPercent(factor.contribution)}</strong>
+                </>
+              )}
             </li>
           ))}
         </ul>

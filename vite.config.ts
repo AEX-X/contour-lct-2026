@@ -1,10 +1,14 @@
 /// <reference types="vitest/config" />
 
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, ".", "");
+  const apiProxyTarget = env.CONTOUR_API_PROXY_TARGET?.trim();
+
+  return {
   build: {
     outDir: "dist/client",
     rollupOptions: {
@@ -27,6 +31,13 @@ export default defineConfig({
     warmup: {
       clientFiles: ["./src/main.tsx"],
     },
+    proxy: apiProxyTarget ? {
+      "/api": {
+        target: apiProxyTarget,
+        changeOrigin: true,
+        secure: false,
+      },
+    } : undefined,
   },
   test: {
     environment: "jsdom",
@@ -93,4 +104,5 @@ export default defineConfig({
       },
     }),
   ],
+  };
 });

@@ -15,7 +15,7 @@ import { EmptyState, PageError, PageLoading } from "../components/StateViews";
 
 export function NotificationsPage() {
   const navigate = useNavigate();
-  const { repository, invalidateAll } = useContour();
+  const { repository, runtime, invalidateAll } = useContour();
   const notificationsQuery = useNotifications();
   const [filter, setFilter] = useState<"unread" | "all">("unread");
   const [openError, setOpenError] = useState<string | null>(null);
@@ -31,6 +31,22 @@ export function NotificationsPage() {
         .sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt)),
     [filter, notificationsQuery.data],
   );
+
+  if (runtime.mode === "api") {
+    return (
+      <div className="page">
+        <header className="page-header">
+          <div>
+            <h1>Уведомления</h1>
+            <p className="page-header__meta">Интеграционный контур</p>
+          </div>
+        </header>
+        <InlineAlert tone="info" title="Центр уведомлений пока не подключён">
+          Текущий backend не предоставляет уведомления и отметку о прочтении. Раздел станет доступен после согласования API-контракта
+        </InlineAlert>
+      </div>
+    );
+  }
 
   if (notificationsQuery.isPending) return <PageLoading label="Загружаем уведомления" />;
   if (notificationsQuery.isError) return <PageError onRetry={() => void notificationsQuery.refetch()} />;

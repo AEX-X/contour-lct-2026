@@ -15,15 +15,24 @@ import {
   type ReactNode,
 } from "react";
 import type { ActionCommandBase, CurrentUser, MutationMeta, User } from "../domain";
+import { RepositoryError } from "../domain";
+import { readRuntimeConfig } from "../config/runtime";
 import { clearDefaultOfflineStorage } from "../offline";
 import {
+  createApiContourRepository,
   createMockContourRepository,
   type ContourRepository,
+  type RepositoryAuthCredentials,
+  type RepositoryRuntimeInfo,
 } from "../repositories";
+import { ApiLoginPage } from "../pages/ApiLoginPage";
 import { contourKeys } from "./queryKeys";
 import { createClientId } from "./clientId";
 
-const repository = createMockContourRepository();
+const runtimeConfig = readRuntimeConfig();
+const repository: ContourRepository = runtimeConfig.dataMode === "api"
+  ? createApiContourRepository({ baseUrl: runtimeConfig.apiBaseUrl })
+  : createMockContourRepository();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,11 +50,13 @@ const queryClient = new QueryClient({
 
 interface ContourContextValue {
   repository: ContourRepository;
+  runtime: RepositoryRuntimeInfo;
   currentUser: CurrentUser;
   profiles: User[];
   isOnline: boolean;
   setIsOnline: (value: boolean) => void;
   switchUser: (userId: string) => Promise<void>;
+  signOut: () => Promise<void>;
   resetDemo: () => Promise<void>;
   invalidateAll: () => Promise<void>;
 }
@@ -54,6 +65,7 @@ const ContourContext = createContext<ContourContextValue | null>(null);
 
 function SessionGate({ children }: { children: ReactNode }) {
   const client = useQueryClient();
+  const runtime = repository.getRuntimeInfo();
   const [isOnline, setIsOnline] = useState(true);
   const [switchingUser, setSwitchingUser] = useState(false);
   const [recovering, setRecovering] = useState(false);
@@ -62,12 +74,14 @@ function SessionGate({ children }: { children: ReactNode }) {
   const currentUserQuery = useQuery({
     queryKey: contourKeys.session(),
     queryFn: () => repository.getCurrentUser(),
+    retry: false,
   });
 
   const profilesQuery = useQuery({
     queryKey: contourKeys.profiles(),
     queryFn: () => repository.listDemoProfiles(),
     staleTime: Infinity,
+    enabled: currentUserQuery.isSuccess,
   });
 
   const invalidateAll = useCallback(async () => {
@@ -108,6 +122,25 @@ function SessionGate({ children }: { children: ReactNode }) {
     [client, removeActorScopedQueries],
   );
 
+  const login = useCallback(async (credentials: RepositoryAuthCredentials) => {
+    if (!repository.login) {
+      throw new RepositoryError("FORBIDDEN", "В текущем режиме отдельный вход не требуется");
+    }
+    await client.cancelQueries();
+    const nextUser = await repository.login(credentials);
+    client.setQueryData(contourKeys.session(), nextUser);
+    client.setQueryData(contourKeys.profiles(), [nextUser]);
+    removeActorScopedQueries();
+  }, [client, removeActorScopedQueries]);
+
+  const signOut = useCallback(async () => {
+    if (!repository.logout) return;
+    await client.cancelQueries();
+    await repository.logout();
+    client.clear();
+    window.location.replace("/");
+  }, [client]);
+
   const resetDemo = useCallback(async () => {
     await client.cancelQueries();
     await repository.reset();
@@ -130,35 +163,47 @@ function SessionGate({ children }: { children: ReactNode }) {
     }
   }, [resetDemo]);
 
-  if (switchingUser || currentUserQuery.isPending || profilesQuery.isPending) {
+  const authRequired = currentUserQuery.error instanceof RepositoryError && currentUserQuery.error.code === "AUTH_REQUIRED";
+
+  if (authRequired && repository.login) {
+    return <ApiLoginPage runtime={runtime} onLogin={login} />;
+  }
+
+  if (switchingUser || currentUserQuery.isPending || (currentUserQuery.isSuccess && profilesQuery.isPending)) {
     return (
       <div className="app-loading" role="status" aria-live="polite">
         <span className="app-loading__mark">C</span>
-        <span>{switchingUser ? "Переключаем рабочую роль" : "Запускаем демонстрационный контур"}</span>
+        <span>{switchingUser ? "Переключаем рабочую роль" : runtime.mode === "api" ? "Подключаем backend" : "Запускаем демонстрационный контур"}</span>
       </div>
     );
   }
 
-  if (currentUserQuery.isError || profilesQuery.isError) {
+  if (currentUserQuery.isError || profilesQuery.isError || !profilesQuery.data) {
     return (
       <main className="fatal-state">
         <h1>Не удалось открыть Contour</h1>
-        <p>Демонстрационные данные не загрузились. Сбрось сценарий и попробуй снова</p>
+        <p>{runtime.mode === "api" ? "Backend недоступен или вернул несовместимый ответ" : "Демонстрационные данные не загрузились. Сбрось сценарий и попробуй снова"}</p>
         {recoveryError ? <p role="alert">{recoveryError}</p> : null}
-        <button type="button" disabled={recovering} onClick={() => void recoverDemo()}>
-          {recovering ? "Сбрасываем..." : "Сбросить демо"}
-        </button>
+        {runtime.mode === "mock" ? (
+          <button type="button" disabled={recovering} onClick={() => void recoverDemo()}>
+            {recovering ? "Сбрасываем..." : "Сбросить демо"}
+          </button>
+        ) : (
+          <button type="button" onClick={() => window.location.reload()}>Повторить подключение</button>
+        )}
       </main>
     );
   }
 
   const value: ContourContextValue = {
     repository,
+    runtime,
     currentUser: currentUserQuery.data,
     profiles: profilesQuery.data,
     isOnline,
     setIsOnline,
     switchUser,
+    signOut,
     resetDemo,
     invalidateAll,
   };

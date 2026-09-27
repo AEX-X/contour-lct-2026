@@ -373,6 +373,18 @@ export class MockContourRepository implements ContourRepository {
     }
   }
 
+  getRuntimeInfo() {
+    return {
+      mode: 'mock' as const,
+      label: 'Демонстрационный контур',
+      description: 'Автономный сценарий на синтетических данных',
+      apiBaseUrl: null,
+      supportsDemoRoleSwitch: true,
+      supportsDemoReset: true,
+      supportsOfflineSimulation: true,
+    }
+  }
+
   private loadState(): DemoState {
     const serialized = this.storage.getItem(STORAGE_KEY)
     if (!serialized) return createDemoSeed()

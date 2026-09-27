@@ -4,8 +4,10 @@ import { StatusBadge } from "../shared/ui";
 import { useAuditTimeline, useWorkOrders } from "../app/dataHooks";
 import { formatDateTime } from "../app/labels";
 import { EmptyState, PageError, PageLoading } from "../components/StateViews";
+import { useContour } from "../app/ContourProvider";
 
 export function AuditPage() {
+  const { runtime } = useContour();
   const ordersQuery = useWorkOrders();
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const fallbackId = ordersQuery.data?.[0]?.id;
@@ -20,9 +22,11 @@ export function AuditPage() {
       <header className="page-header">
         <div>
           <h1>Журнал аудита</h1>
-          <p className="page-header__meta">Локальный синтетический журнал значимых действий демо-сценария</p>
+          <p className="page-header__meta">
+            {runtime.mode === "api" ? "Append-only журнал действий текущего backend" : "Локальный синтетический журнал значимых действий демо-сценария"}
+          </p>
         </div>
-        <StatusBadge tone="info" icon={ShieldCheck}>Демо-журнал</StatusBadge>
+        <StatusBadge tone="info" icon={ShieldCheck}>{runtime.mode === "api" ? "Backend-аудит" : "Демо-журнал"}</StatusBadge>
       </header>
 
       <div className="split-layout">

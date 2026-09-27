@@ -58,9 +58,29 @@ export interface RepositoryChange {
   snapshot: RepositorySnapshot
 }
 
+export type RepositoryMode = 'mock' | 'api'
+
+export interface RepositoryRuntimeInfo {
+  mode: RepositoryMode
+  label: string
+  description: string
+  apiBaseUrl: string | null
+  supportsDemoRoleSwitch: boolean
+  supportsDemoReset: boolean
+  supportsOfflineSimulation: boolean
+}
+
+export interface RepositoryAuthCredentials {
+  username: string
+  password: string
+}
+
 export interface ContourRepository {
+  getRuntimeInfo(): RepositoryRuntimeInfo
   getSnapshot(): RepositorySnapshot
   subscribe(listener: (change: RepositoryChange) => void): () => void
+  login?(credentials: RepositoryAuthCredentials): Promise<CurrentUser>
+  logout?(): Promise<void>
   getCurrentUser(): Promise<CurrentUser>
   listDemoProfiles(): Promise<User[]>
   switchDemoUser(userId: string): Promise<CurrentUser>
@@ -75,6 +95,7 @@ export interface ContourRepository {
 
   listRisks(params?: RiskListParams): Promise<RiskForecast[]>
   getRisk(riskId: string): Promise<RiskForecast>
+  acknowledgeRisk?(riskId: string, command: RiskDecisionCommand): Promise<RiskForecast>
   confirmRisk(riskId: string, command: RiskDecisionCommand): Promise<{ risk: RiskForecast; incident: Incident; auditEventId: string }>
   listIncidents(facilityId?: string): Promise<Incident[]>
 

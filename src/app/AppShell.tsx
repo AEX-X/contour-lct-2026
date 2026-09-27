@@ -12,6 +12,7 @@ import {
   House,
   MagnifyingGlass,
   Pulse,
+  SignOut,
   SquaresFour,
   UserCircle,
   UsersThree,
@@ -89,7 +90,7 @@ function Brand() {
 }
 
 function ProfileMenu() {
-  const { currentUser, profiles, switchUser, resetDemo } = useContour();
+  const { currentUser, profiles, runtime, switchUser, resetDemo, signOut } = useContour();
   const [open, setOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [menuError, setMenuError] = useState<string | null>(null);
@@ -123,6 +124,17 @@ function ProfileMenu() {
     }
   }
 
+  async function handleSignOut() {
+    setPendingAction("sign-out");
+    setMenuError(null);
+    try {
+      await signOut();
+    } catch {
+      setMenuError("Не удалось завершить backend-сессию. Обнови страницу и повтори попытку");
+      setPendingAction(null);
+    }
+  }
+
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
@@ -145,8 +157,10 @@ function ProfileMenu() {
         className="profile-menu__trigger"
         type="button"
         aria-expanded={open}
-        aria-controls="demo-profile-options"
-        aria-label={`Профиль: ${roleLabels[currentUser.role]}. Переключить роль`}
+        aria-controls="profile-options"
+        aria-label={runtime.supportsDemoRoleSwitch
+          ? `Профиль: ${roleLabels[currentUser.role]}. Переключить роль`
+          : `Профиль: ${roleLabels[currentUser.role]}. Открыть меню сессии`}
         onClick={() => setOpen((value) => !value)}
       >
         <span className="profile-menu__avatar" aria-hidden="true">
@@ -156,50 +170,70 @@ function ProfileMenu() {
         <CaretDown size={14} aria-hidden="true" />
       </button>
       {open ? (
-        <div className="profile-popover" id="demo-profile-options" aria-label="Демо-профили">
-          <p className="profile-popover__title">Переключить демо-роль</p>
-          {profiles.map((profile) => (
+        <div className="profile-popover" id="profile-options" aria-label="Профиль и сессия">
+          <p className="profile-popover__title">
+            {runtime.supportsDemoRoleSwitch ? "Переключить демо-роль" : runtime.label}
+          </p>
+          {runtime.supportsDemoRoleSwitch ? profiles.map((profile) => (
+              <button
+                key={profile.id}
+                className="profile-popover__option"
+                type="button"
+                disabled={pendingAction !== null}
+                aria-busy={pendingAction === `user:${profile.id}` || undefined}
+                aria-pressed={profile.id === currentUser.id}
+                aria-current={profile.id === currentUser.id ? "true" : undefined}
+                onClick={() => void handleSwitchUser(profile.id)}
+              >
+                <span className="profile-menu__avatar" aria-hidden="true">
+                  <UserCircle size={22} />
+                </span>
+                <span>
+                  <strong>{profile.displayName}</strong>
+                  <small>{roleLabels[profile.role]}</small>
+                </span>
+                {profile.id === currentUser.id ? <Check size={18} weight="bold" /> : null}
+              </button>
+            )) : (
+              <div className="profile-popover__session">
+                <strong>{currentUser.displayName}</strong>
+                <small>{runtime.description}</small>
+              </div>
+            )}
+          {runtime.supportsDemoReset ? (
             <button
-              key={profile.id}
               className="profile-popover__option"
               type="button"
               disabled={pendingAction !== null}
-              aria-busy={pendingAction === `user:${profile.id}` || undefined}
-              aria-pressed={profile.id === currentUser.id}
-              aria-current={profile.id === currentUser.id ? "true" : undefined}
-              onClick={() => void handleSwitchUser(profile.id)}
+              aria-busy={pendingAction === "reset" || undefined}
+              onClick={() => setResetConfirmationOpen(true)}
             >
               <span className="profile-menu__avatar" aria-hidden="true">
-                <UserCircle size={22} />
+                <ArrowsClockwise size={20} />
               </span>
               <span>
-                <strong>{profile.displayName}</strong>
-                <small>{roleLabels[profile.role]}</small>
+                <strong>Сбросить сценарий</strong>
+                <small>Вернуть исходные демо-данные</small>
               </span>
-              {profile.id === currentUser.id ? <Check size={18} weight="bold" /> : null}
             </button>
-          ))}
-          <button
-            className="profile-popover__option"
-            type="button"
-            disabled={pendingAction !== null}
-            aria-busy={pendingAction === "reset" || undefined}
-            onClick={() => setResetConfirmationOpen(true)}
-          >
-            <span className="profile-menu__avatar" aria-hidden="true">
-              <ArrowsClockwise size={20} />
-            </span>
-            <span>
-              <strong>Сбросить сценарий</strong>
-              <small>Вернуть исходные демо-данные</small>
-            </span>
-          </button>
+          ) : (
+            <button
+              className="profile-popover__option"
+              type="button"
+              disabled={pendingAction !== null}
+              aria-busy={pendingAction === "sign-out" || undefined}
+              onClick={() => void handleSignOut()}
+            >
+              <span className="profile-menu__avatar" aria-hidden="true"><SignOut size={20} /></span>
+              <span><strong>Выйти</strong><small>Завершить backend-сессию</small></span>
+            </button>
+          )}
           {menuError ? (
             <p className="profile-popover__error" role="alert">
               {menuError}
             </p>
           ) : null}
-          <Modal
+          {runtime.supportsDemoReset ? <Modal
             open={resetConfirmationOpen}
             onClose={() => pendingAction !== "reset" && setResetConfirmationOpen(false)}
             title="Сбросить демонстрационный сценарий?"
@@ -214,7 +248,7 @@ function ProfileMenu() {
             }
           >
             <p>Будут удалены локальные изменения заявок, офлайн-пакеты и несинхронизированные отчёты инженера. Затем восстановятся исходные демо-данные</p>
-          </Modal>
+          </Modal> : null}
         </div>
       ) : null}
     </div>
@@ -222,8 +256,10 @@ function ProfileMenu() {
 }
 
 function SideNavigation() {
-  const { currentUser } = useContour();
-  const items = navigationByRole[currentUser.role];
+  const { currentUser, runtime } = useContour();
+  const items = navigationByRole[currentUser.role].filter(
+    (item) => runtime.mode !== "api" || !["/maintenance/queue", "/notifications"].includes(item.to),
+  );
   return (
     <aside className="side-navigation">
       <Brand />
@@ -260,7 +296,7 @@ function SideNavigation() {
 function AppHeader() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { currentUser, repository } = useContour();
+  const { currentUser, repository, runtime } = useContour();
   const [search, setSearch] = useState("");
   const notifications = useNotifications();
   const unreadCount = notifications.data?.filter((item) => !item.readAt).length ?? 0;
@@ -321,22 +357,26 @@ function AppHeader() {
         />
       </form>
       <div className="header-spacer" />
-      <span className="demo-badge">Демо-данные</span>
+      <span className="demo-badge" data-mode={runtime.mode}>
+        {runtime.mode === "api" ? "Backend API" : "Демо-данные"}
+      </span>
       <div className="freshness">
         <span className="freshness__dot" aria-hidden="true" />
         <span>
-          Время сценария
+          {runtime.mode === "api" ? "Время запроса" : "Время сценария"}
           <br />{snapshotTime}
         </span>
       </div>
-      <NavLink
-        className="icon-button app-header__desktop-only"
-        to="/notifications"
-        aria-label={`Уведомления: ${unreadCount} непрочитанных`}
-      >
-        <Bell size={21} aria-hidden="true" />
-        {unreadCount ? <span className="notification-count">{unreadCount}</span> : null}
-      </NavLink>
+      {runtime.mode === "mock" ? (
+        <NavLink
+          className="icon-button app-header__desktop-only"
+          to="/notifications"
+          aria-label={`Уведомления: ${unreadCount} непрочитанных`}
+        >
+          <Bell size={21} aria-hidden="true" />
+          {unreadCount ? <span className="notification-count">{unreadCount}</span> : null}
+        </NavLink>
+      ) : null}
       <ProfileMenu />
     </header>
   );
@@ -344,9 +384,12 @@ function AppHeader() {
 
 function MobileNavigation({ role }: { role: DemoRole }) {
   const location = useLocation();
+  const { runtime } = useContour();
   const detailsRef = useRef<HTMLDetailsElement>(null);
-  const items: NavigationItem[] = [...navigationByRole[role]];
-  if (!items.some((item) => item.to === "/notifications")) {
+  const items: NavigationItem[] = navigationByRole[role].filter(
+    (item) => runtime.mode !== "api" || !["/maintenance/queue", "/notifications"].includes(item.to),
+  );
+  if (runtime.mode === "mock" && !items.some((item) => item.to === "/notifications")) {
     items.push({ to: "/notifications", label: "Уведомления", icon: Bell });
   }
   items.push({ to: "/settings", label: "Настройки", icon: GearSix });

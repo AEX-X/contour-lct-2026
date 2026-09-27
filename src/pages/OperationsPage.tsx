@@ -16,7 +16,8 @@ import { facilityStatusLabels, pluralizeRu, statusLabels } from "../app/labels";
 import { EmptyState, PageError, PageLoading } from "../components/StateViews";
 
 export function OperationsPage() {
-  const { repository, invalidateAll } = useContour();
+  const { repository, runtime, invalidateAll } = useContour();
+  const supportsShiftAssignments = runtime.mode === "mock";
   const commandMeta = useRepositoryCommandMeta();
   const facilitiesQuery = useFacilities();
   const ordersQuery = useWorkOrders();
@@ -59,7 +60,9 @@ export function OperationsPage() {
 
   const openOrders = orders.filter((order) => !["draft", "closed", "cancelled"].includes(order.status));
   const breached = openOrders.filter((order) => order.sla?.state === "breached");
-  const unassignedFacilities = facilities.filter((facility) => !facility.responsibleDispatcherId);
+  const unassignedFacilities = supportsShiftAssignments
+    ? facilities.filter((facility) => !facility.responsibleDispatcherId)
+    : [];
   const urgentOrders = [...openOrders]
     .sort((first, second) => {
       if (first.sla?.state === "breached" && second.sla?.state !== "breached") return -1;
@@ -84,9 +87,15 @@ export function OperationsPage() {
       <header className="page-header">
         <div>
           <h1>Операции эксплуатационной зоны</h1>
-          <p className="page-header__meta">Объекты, смены диспетчеров и контроль SLA</p>
+          <p className="page-header__meta">
+            {supportsShiftAssignments
+              ? "Объекты, смены диспетчеров и контроль SLA"
+              : "Объекты и контроль SLA по данным backend"}
+          </p>
         </div>
-        <StatusBadge tone="info">Смены по индивидуальным интервалам</StatusBadge>
+        <StatusBadge tone="info">
+          {supportsShiftAssignments ? "Смены по индивидуальным интервалам" : "Назначения смен не передаются API"}
+        </StatusBadge>
       </header>
 
       {unassignedFacilities.length ? (
@@ -122,8 +131,14 @@ export function OperationsPage() {
           <span className="metric-strip__label">{pluralizeRu(breached.length, ["нарушение SLA", "нарушения SLA", "нарушений SLA"])}</span>
         </div>
         <div className="metric-strip__item">
-          <span className="metric-strip__value">{facilities.length - unassignedFacilities.length}</span>
-          <span className="metric-strip__label">{pluralizeRu(facilities.length - unassignedFacilities.length, ["смена укомплектована", "смены укомплектованы", "смен укомплектовано"])}</span>
+          <span className="metric-strip__value">
+            {supportsShiftAssignments ? facilities.length - unassignedFacilities.length : "-"}
+          </span>
+          <span className="metric-strip__label">
+            {supportsShiftAssignments
+              ? pluralizeRu(facilities.length - unassignedFacilities.length, ["смена укомплектована", "смены укомплектованы", "смен укомплектовано"])
+              : "назначения не переданы backend"}
+          </span>
         </div>
       </div>
 
@@ -166,7 +181,9 @@ export function OperationsPage() {
                           </StatusBadge>
                         </td>
                         <td>
-                          {facility.responsibleDispatcherId ? (
+                          {!supportsShiftAssignments ? (
+                            <StatusBadge tone="neutral">Нет данных API</StatusBadge>
+                          ) : facility.responsibleDispatcherId ? (
                             <span className="inline-person">
                               <CheckCircle size={17} className="tone-success" /> Назначен
                             </span>
@@ -236,7 +253,7 @@ export function OperationsPage() {
         </aside>
       </div>
 
-      <Modal
+      {supportsShiftAssignments ? <Modal
         open={Boolean(facilityToAssign)}
         onClose={() => setAssignFacilityId(null)}
         title="Назначить диспетчера на смену"
@@ -278,7 +295,7 @@ export function OperationsPage() {
             Возможно, объект уже изменён другим пользователем. Закрой окно и повтори действие
           </InlineAlert>
         ) : null}
-      </Modal>
+      </Modal> : null}
     </div>
   );
 }
