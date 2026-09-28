@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.vite/
+.sites-runtime/
+audit-evidence/
+
+*.log
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db

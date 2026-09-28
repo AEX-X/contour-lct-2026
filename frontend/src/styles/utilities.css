@@ -1,0 +1,103 @@
+.u-sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.u-tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.u-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.u-break-anywhere {
+  overflow-wrap: anywhere;
+}
+
+.u-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--stack-gap, var(--space-4));
+}
+
+.u-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cluster-gap, var(--space-3));
+}
+
+.u-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.u-surface {
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.u-scroll-area {
+  overscroll-behavior: contain;
+  scrollbar-color: var(--color-neutral-300) transparent;
+  scrollbar-width: thin;
+}
+
+.u-scroll-area::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.u-scroll-area::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-300);
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background-clip: padding-box;
+}
+
+.u-page-title {
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-heading);
+}
+
+.u-section-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-heading);
+}
+
+.u-muted {
+  color: var(--color-text-muted);
+}
+
+.u-secondary {
+  color: var(--color-text-secondary);
+}
+
+.u-divider {
+  width: 100%;
+  height: 1px;
+  border: 0;
+  background: var(--color-border-subtle);
+}
+
+@media (max-width: 47.99rem) {
+  .u-page-title {
+    font-size: var(--font-size-2xl);
+  }
+}
