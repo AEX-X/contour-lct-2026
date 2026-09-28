@@ -69,6 +69,22 @@ PowerShell, если данные не в `ml-data/`:
 
 Проверка: `GET https://localhost:8443/api/v1/risks` под `manager`. Прогнозы моделей видны по полю `model`: `hgb-v2-run002-…` — по датчикам, `hgb-object-run008-…` и `hgb-object-run009-…` — по объектам (`target.type = "facility"`).
 
+### Временный командный preview
+
+Для короткой внешней проверки уже запущенного Full-контура:
+
+```powershell
+.\scripts\start-preview.ps1
+```
+
+Контейнер `preview-gateway` переводит входящий HTTP-трафик туннеля во внутренний HTTPS к основному nginx, а контейнер `preview` устанавливает исходящее SSH-соединение с localhost.run и получает случайный адрес `*.lhr.life`. Оба контейнера находятся только в сети `edge`. PostgreSQL, backend и ML внешних портов не получают. Базовые образы закреплены по digest, процессы работают без Linux capabilities, с read-only filesystem и `no-new-privileges`
+
+Анонимный туннель меняет URL после пересоздания и подходит только для временного командного тестирования. Он работает, пока включены этот компьютер, Docker и оба preview-контейнера. Остановить его можно командой:
+
+```powershell
+.\scripts\stop-preview.ps1
+```
+
 ### Переменные режима с ML
 
 | Переменная | Назначение | По умолчанию |

@@ -30,6 +30,7 @@ async def get_events(
     facility_id: str | None = Query(default=None),
     sensor_id: str | None = Query(default=None),
     event_type: str | None = Query(default=None),
+    is_confirmed_incident: bool | None = Query(default=None),
     from_: str | None = Query(default=None, alias="from"),
     to: str | None = Query(default=None),
     cursor: str | None = Query(default=None),
@@ -42,6 +43,7 @@ async def get_events(
         facility_id: Optional exact facility filter.
         sensor_id: Optional exact sensor filter.
         event_type: Optional exact event_type (sensor_type_id) filter.
+        is_confirmed_incident: Optional exact incident-confirmation filter.
         from_: Optional ISO 8601 inclusive lower bound on occurred_at.
         to: Optional ISO 8601 inclusive upper bound on occurred_at.
         cursor: Opaque pagination cursor.
@@ -67,6 +69,7 @@ async def get_events(
             facility_id=facility_id,
             sensor_id=sensor_id,
             event_type=event_type,
+            is_confirmed_incident=is_confirmed_incident,
             occurred_from=occurred_from,
             occurred_to=occurred_to,
             cursor=cursor,

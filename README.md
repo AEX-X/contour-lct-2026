@@ -137,7 +137,23 @@ Remove-Item Env:CONTOUR_DATASET_PASSWORD
 - Swagger: [https://localhost:8443/docs](https://localhost:8443/docs)
 - healthcheck: [https://localhost:8443/health](https://localhost:8443/health)
 
-TLS-сертификат самоподписанный. При первом открытии браузер покажет предупреждение. Для локального демо его нужно принять один раз
+### Временная ссылка для командной проверки
+
+После запуска Full можно открыть production-сборку команде через временный SSH-туннель localhost.run:
+
+```powershell
+.\scripts\start-preview.ps1
+```
+
+Скрипт собирает контейнер туннеля и печатает случайный HTTPS-адрес `*.lhr.life`. Ссылка работает только пока включены этот компьютер, Docker и сервисы `preview` и `preview-gateway`. Она предназначена только для командного тестирования демо-данных и не заменяет постоянный сервер
+
+Остановить внешний доступ:
+
+```powershell
+.\scripts\stop-preview.ps1
+```
+
+На внешней preview-ссылке используется доверенный TLS-сертификат localhost.run. Самоподписанный сертификат и предупреждение браузера относятся только к локальному адресу `https://localhost:8443`
 
 ## Lite режим
 

@@ -33,7 +33,7 @@ class Event(Base):
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     state: Mapped[str] = mapped_column(String)
     value: Mapped[str] = mapped_column(String)
-    is_confirmed_incident: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_confirmed_incident: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     verification_result: Mapped[str | None] = mapped_column(String, nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     related_risk_id: Mapped[str | None] = mapped_column(String, nullable=True)

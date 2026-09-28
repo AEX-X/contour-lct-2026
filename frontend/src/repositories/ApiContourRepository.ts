@@ -1152,10 +1152,11 @@ export class ApiContourRepository implements ContourRepository {
     return this.cached(`incidents:${facilityId ?? 'all'}`, async () => {
       const events = await this.listAll((cursor) => this.client.get('/events', eventListSchema, {
         facility_id: facilityId,
+        is_confirmed_incident: 'true',
         cursor,
         limit: 200,
       }))
-      return events.filter((event) => event.is_confirmed_incident).map(mapIncident)
+      return events.map(mapIncident)
     })
   }
 

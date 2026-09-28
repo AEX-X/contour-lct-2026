@@ -20,6 +20,7 @@ async def list_events(
     facility_id: str | None = None,
     sensor_id: str | None = None,
     event_type: str | None = None,
+    is_confirmed_incident: bool | None = None,
     occurred_from: datetime | None = None,
     occurred_to: datetime | None = None,
     cursor: str | None = None,
@@ -36,6 +37,7 @@ async def list_events(
         facility_id: Optional exact facility filter.
         sensor_id: Optional exact sensor filter.
         event_type: Optional exact event_type (sensor_type_id) filter.
+        is_confirmed_incident: Optional exact incident-confirmation filter.
         occurred_from: Optional inclusive lower bound on occurred_at.
         occurred_to: Optional inclusive upper bound on occurred_at.
         cursor: Opaque cursor -- the last-seen event id, exclusive.
@@ -57,6 +59,8 @@ async def list_events(
         base_stmt = base_stmt.where(Event.sensor_id == sensor_id)
     if event_type:
         base_stmt = base_stmt.where(Event.event_type == event_type)
+    if is_confirmed_incident is not None:
+        base_stmt = base_stmt.where(Event.is_confirmed_incident.is_(is_confirmed_incident))
     if occurred_from:
         base_stmt = base_stmt.where(Event.occurred_at >= occurred_from)
     if occurred_to:

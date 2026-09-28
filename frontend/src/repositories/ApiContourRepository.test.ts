@@ -416,6 +416,54 @@ describe('ApiContourRepository', () => {
     expect(facility?.provenance.note).toContain('координаты являются демонстрационными')
   })
 
+  it('requests only confirmed incidents instead of downloading the full event journal', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/auth/login') return json({ token: 'session-token' })
+      if (url === '/api/v1/me') return json(mePayload)
+      if (url === '/api/v1/events?is_confirmed_incident=true&limit=200') {
+        return json({
+          data: [{
+            id: 'evt-confirmed-1',
+            event_type: 'smoke_detector',
+            source: 'historical',
+            facility_id: 'fac-1',
+            sensor_id: 'sensor-1',
+            occurred_at: '2026-09-27T20:00:00Z',
+            ingested_at: '2026-09-27T20:01:00Z',
+            state: 'alarm',
+            value: '1',
+            is_confirmed_incident: true,
+            verification_result: 'confirmed_true',
+            resolved_at: null,
+            related_risk_id: 'risk-1',
+          }],
+          meta: { next_cursor: null, total: 1, generated_at: '2026-09-27T20:02:00Z' },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    const repository = createApiContourRepository({
+      baseUrl: '/api/v1',
+      fetcher: fetcher as typeof fetch,
+      storage: createMemoryStorage(),
+    })
+    await repository.login!({ username: 'manager', password: 'secret' })
+
+    const incidents = await repository.listIncidents()
+
+    expect(incidents).toHaveLength(1)
+    expect(incidents[0]).toMatchObject({
+      id: 'evt-confirmed-1',
+      facilityId: 'fac-1',
+      status: 'open',
+      sourceRiskId: 'risk-1',
+    })
+    expect(fetcher.mock.calls.map(([input]) => String(input))).toContain(
+      '/api/v1/events?is_confirmed_incident=true&limit=200',
+    )
+  })
+
   it('does not invent numeric factor contributions missing from backend', async () => {
     const repository = createApiContourRepository({
       baseUrl: '/api/v1',

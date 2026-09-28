@@ -1258,7 +1258,7 @@
           "events"
         ],
         "summary": "Get Events",
-        "description": "List events/incidents within the caller's scope.\n\nArgs:\n    facility_id: Optional exact facility filter.\n    sensor_id: Optional exact sensor filter.\n    event_type: Optional exact event_type (sensor_type_id) filter.\n    from_: Optional ISO 8601 inclusive lower bound on occurred_at.\n    to: Optional ISO 8601 inclusive upper bound on occurred_at.\n    cursor: Opaque pagination cursor.\n    limit: Page size, 1-200.\n    user: The authenticated caller, injected by get_current_user.\n\nReturns:\n    An EventListEnvelope containing only events the caller may see.",
+        "description": "List events/incidents within the caller's scope.\n\nArgs:\n    facility_id: Optional exact facility filter.\n    sensor_id: Optional exact sensor filter.\n    event_type: Optional exact event_type (sensor_type_id) filter.\n    is_confirmed_incident: Optional exact incident-confirmation filter.\n    from_: Optional ISO 8601 inclusive lower bound on occurred_at.\n    to: Optional ISO 8601 inclusive upper bound on occurred_at.\n    cursor: Opaque pagination cursor.\n    limit: Page size, 1-200.\n    user: The authenticated caller, injected by get_current_user.\n\nReturns:\n    An EventListEnvelope containing only events the caller may see.",
         "operationId": "get_events_api_v1_events_get",
         "parameters": [
           {
@@ -1307,6 +1307,22 @@
                 }
               ],
               "title": "Event Type"
+            }
+          },
+          {
+            "name": "is_confirmed_incident",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Is Confirmed Incident"
             }
           },
           {

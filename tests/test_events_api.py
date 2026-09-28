@@ -198,6 +198,28 @@ async def test_confirmed_incident_distinguishable_from_plain_alarm() -> None:
     assert confirmed["related_risk_id"] == "risk_events_api_test"
     assert plain["state"] == confirmed["state"] == "alarm"  # same alert state; incident status is a separate field
 
+    confirmed_only = await _get(
+        token,
+        "/api/v1/events",
+        facility_id="fac_events_incident",
+        is_confirmed_incident=True,
+    )
+    assert confirmed_only.status_code == 200
+    assert [event["sensor_id"] for event in confirmed_only.json()["data"]] == [
+        f"sensor_{confirmed_channel}"
+    ]
+
+    unconfirmed_only = await _get(
+        token,
+        "/api/v1/events",
+        facility_id="fac_events_incident",
+        is_confirmed_incident=False,
+    )
+    assert unconfirmed_only.status_code == 200
+    assert [event["sensor_id"] for event in unconfirmed_only.json()["data"]] == [
+        f"sensor_{plain_channel}"
+    ]
+
 
 @pytest.mark.asyncio
 async def test_invalid_from_returns_400() -> None:
