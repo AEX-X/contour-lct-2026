@@ -1,13 +1,18 @@
 """Tests for GET /api/v1/sensors."""
+
+from datetime import datetime, timezone
+
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event
 
-from src.db import async_session_factory
+from src.db import async_session_factory, engine
 from src.main import app
-from src.models.sensor import SensorChannel
+from src.models.sensor import SensorChannel, SensorReading
 from src.services.demo_seed import seed_demo_users
 from src.services.facility_seed import seed_facility_catalogue
 from src.services.sensor_channel_seed import seed_sensor_channel_catalogue
+from src.services.sensor_query import list_sensors
 
 
 async def _seed_all() -> None:
@@ -37,7 +42,9 @@ async def _seed_orphan(channel_id: str) -> None:
 async def _login(username: str, password: str) -> str:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/auth/login", json={"username": username, "password": password})
+        response = await client.post(
+            "/api/v1/auth/login", json={"username": username, "password": password}
+        )
     assert response.status_code == 200
     return response.json()["token"]
 
@@ -45,7 +52,11 @@ async def _login(username: str, password: str) -> str:
 async def _get_sensors(token: str, **params):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        return await client.get("/api/v1/sensors", headers={"Authorization": f"Bearer {token}"}, params=params)
+        return await client.get(
+            "/api/v1/sensors",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params,
+        )
 
 
 @pytest.mark.asyncio
@@ -103,6 +114,85 @@ async def test_every_sensor_lacks_geolocation_but_stays_listed() -> None:
     for item in body["data"]:
         assert item["has_geolocation"] is False
         assert item["position"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_includes_latest_reading_snapshot_in_one_batch_query() -> None:
+    await _seed_all()
+    channel_id = "test_list_snapshot_1"
+    async with async_session_factory() as session:
+        session.add(
+            SensorChannel(
+                id=f"sensor_{channel_id}",
+                channel_id=channel_id,
+                tag="snapshot",
+                sensor_type_id="temperature_sensor",
+                system_type="temperature",
+                display_name="Snapshot batch sensor",
+                facility_id="fac_5122",
+                hierarchy_node_id="node_fac_5122",
+            )
+        )
+        session.add_all(
+            [
+                SensorReading(
+                    channel_id=channel_id,
+                    occurred_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+                    is_alarm=False,
+                    raw_value="21",
+                    numeric_value=21.0,
+                    is_anomaly=False,
+                    source_event_id="evt_list_snapshot_old",
+                ),
+                SensorReading(
+                    channel_id=channel_id,
+                    occurred_at=datetime(2026, 8, 2, tzinfo=timezone.utc),
+                    is_alarm=False,
+                    raw_value="27",
+                    numeric_value=27.0,
+                    is_anomaly=False,
+                    source_event_id="evt_list_snapshot_latest",
+                ),
+            ]
+        )
+        await session.commit()
+
+    token = await _login("manager", "manager123")
+    response = await _get_sensors(token, query="Snapshot batch sensor")
+    assert response.status_code == 200
+    item = response.json()["data"][0]
+    assert item["current_reading"]["numeric_value"] == 27.0
+    assert item["current_reading"]["measured_at"] == "2026-08-02T00:00:00Z"
+    assert item["current_state"] == "unknown"
+    assert item["data_health"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_list_query_count_is_bounded_for_a_page_of_sensors() -> None:
+    await _seed_all()
+    statements: list[str] = []
+
+    def record_statement(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", record_statement)
+    try:
+        async with async_session_factory() as session:
+            items, _, _ = await list_sensors(
+                session,
+                allowed_facility_ids=None,
+                facility_id="fac_5122",
+                limit=40,
+            )
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", record_statement)
+
+    assert items
+    assert len(statements) == 2
+    assert "LEFT OUTER JOIN LATERAL" in statements[1]
 
 
 @pytest.mark.asyncio

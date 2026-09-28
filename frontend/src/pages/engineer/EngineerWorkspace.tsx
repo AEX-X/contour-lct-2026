@@ -38,6 +38,7 @@ import {
   type Facility,
   type HierarchyNode,
   type Incident,
+  type MutationMeta,
   type RepairResult,
   type RiskForecast,
   type Sensor,
@@ -147,6 +148,7 @@ const SENSOR_STATUS_LABELS: Record<Sensor['status'], string> = {
   attention: 'Внимание',
   alarm: 'Тревога',
   offline: 'Нет связи',
+  unknown: 'Состояние не рассчитано',
 }
 
 function createIdempotencyKey(
@@ -241,7 +243,10 @@ export function EngineerWorkspace({
   const assignmentQuery = (searchParams.get('q') ?? '').trim().toLocaleLowerCase('ru-RU')
   const isSyncRoute = location.pathname.endsWith('/sync')
   const isResultRoute = location.pathname.endsWith('/result')
+  const runtime = repository.getRuntimeInfo()
   const scenarioId = repository.getSnapshot().scenarioId
+  const canReadAudit = currentUser.permissions.includes('audit.read')
+  const canReadRisks = currentUser.permissions.includes('risk.read')
   const offlineService = useMemo(
     () =>
       injectedOfflineService ??
@@ -274,6 +279,8 @@ export function EngineerWorkspace({
   const [waitReason, setWaitReason] = useState('')
   const [declineOpen, setDeclineOpen] = useState(false)
   const [declineReason, setDeclineReason] = useState('')
+  const [assignmentsError, setAssignmentsError] = useState<string | null>(null)
+  const [orderError, setOrderError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [contextError, setContextError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -285,7 +292,7 @@ export function EngineerWorkspace({
   const [resultDraft, setResultDraft] = useState<ResultWizardDraft | null>(null)
   const [draftLoading, setDraftLoading] = useState(false)
   const selectedIdRef = useRef(selectedId)
-  const commandKeyByIntentRef = useRef(new Map<string, string>())
+  const commandMetaByIntentRef = useRef(new Map<string, MutationMeta>())
   const offlineReloadSupported = typeof window === 'undefined' || window.isSecureContext
 
   useEffect(() => {
@@ -299,6 +306,7 @@ export function EngineerWorkspace({
       setSelectedId(nextId)
       setSelectedOrder(null)
       setTechnicalContext(null)
+      setOrderError(null)
       setOrderLoading(Boolean(nextId))
       setWizardOpen(false)
       setResultDraft(null)
@@ -307,28 +315,57 @@ export function EngineerWorkspace({
   }, [requestedWorkOrderId])
 
   useEffect(() => {
-    if (isSyncRoute && !selectedId && assignments[0]) {
-      queueMicrotask(() => setSelectedId(assignments[0]!.id))
+    if (isSyncRoute && !selectedId) {
+      const nextId = assignments[0]?.id ?? offlineMutations.find(
+        (mutation) => mutation.status !== 'synced',
+      )?.workOrderId
+      if (nextId) queueMicrotask(() => setSelectedId(nextId))
     }
-  }, [assignments, isSyncRoute, selectedId])
+  }, [assignments, isSyncRoute, offlineMutations, selectedId])
 
   const refreshAssignments = useCallback(async () => {
     if (currentUser.role !== 'engineer') {
       setOrdersLoading(false)
       return
     }
+    setOrdersLoading(true)
     try {
+      if (!online) {
+        await offlineService.initialize()
+        const packages = await offlineService.listPackages<EngineerTechnicalContext>()
+        const localAssignments = packages
+          .filter((workPackage) => workPackage.engineerId === currentUser.id)
+          .map((workPackage) => workPackage.context?.workOrder)
+          .filter((order): order is WorkOrder => Boolean(order?.id))
+          .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+        setAssignments(localAssignments)
+        setAssignmentsError(null)
+        return
+      }
       const nextAssignments = await repository.listWorkOrders({
         assignedToCurrentUser: true,
       })
-      setAssignments(nextAssignments)
-      setError(null)
+      if (isSyncRoute) {
+        await offlineService.initialize()
+        const packages = await offlineService.listPackages<EngineerTechnicalContext>()
+        const mergedAssignments = new Map(nextAssignments.map((order) => [order.id, order]))
+        packages
+          .filter((workPackage) => workPackage.engineerId === currentUser.id)
+          .forEach((workPackage) => {
+            const order = workPackage.context?.workOrder
+            if (order?.id && !mergedAssignments.has(order.id)) mergedAssignments.set(order.id, order)
+          })
+        setAssignments([...mergedAssignments.values()])
+      } else {
+        setAssignments(nextAssignments)
+      }
+      setAssignmentsError(null)
     } catch (nextError) {
-      setError(messageFromError(nextError))
+      setAssignmentsError(messageFromError(nextError))
     } finally {
       setOrdersLoading(false)
     }
-  }, [currentUser.role, repository])
+  }, [currentUser.id, currentUser.role, isSyncRoute, offlineService, online, repository])
 
   const refreshSelectedOrder = useCallback(async () => {
     if (!selectedId || currentUser.role !== 'engineer') {
@@ -338,7 +375,26 @@ export function EngineerWorkspace({
     }
     const requestId = selectedId
     setOrderLoading(true)
+    setOrderError(null)
     try {
+      if (!online) {
+        await offlineService.initialize()
+        const workPackage = await offlineService.getPackage<EngineerTechnicalContext>(requestId)
+        if (!workPackage || workPackage.engineerId !== currentUser.id || !workPackage.context?.workOrder) {
+          setSelectedOrder(null)
+          setTechnicalContext(null)
+          setOfflinePackageReady(false)
+          setOfflinePackagePreparedAt(null)
+          setOrderError('На устройстве нет действующего офлайн-пакета для этой заявки')
+          return
+        }
+        setSelectedOrder(workPackage.context.workOrder)
+        setTechnicalContext(workPackage.context)
+        setOfflinePackageReady(true)
+        setOfflinePackagePreparedAt(workPackage.preparedAt)
+        setOrderError(null)
+        return
+      }
       const nextOrder = await repository.getWorkOrder(requestId)
       if (selectedIdRef.current !== requestId) return
       if (
@@ -352,7 +408,7 @@ export function EngineerWorkspace({
         setTechnicalContext(null)
       }
       setSelectedOrder(nextOrder)
-      setError(null)
+      setOrderError(null)
     } catch (nextError) {
       if (selectedIdRef.current !== requestId) return
       if (
@@ -370,17 +426,17 @@ export function EngineerWorkspace({
         isRepositoryError(nextError) &&
         (nextError.code === 'ACCESS_EXPIRED' || nextError.code === 'FORBIDDEN')
       ) {
-        setError('Временный доступ к заявке завершён')
+        setOrderError('Временный доступ к заявке завершён')
       } else {
-        setError(messageFromError(nextError))
+        setOrderError(messageFromError(nextError))
       }
     } finally {
       if (selectedIdRef.current === requestId) setOrderLoading(false)
     }
-  }, [currentUser.role, offlineService, repository, selectedId])
+  }, [currentUser.id, currentUser.role, offlineService, online, repository, selectedId])
 
   const refreshOfflineState = useCallback(async () => {
-    if (!selectedId) {
+    if (!selectedId && !isSyncRoute) {
       setOfflineMutations([])
       setOfflinePackageReady(false)
       setOfflinePackagePreparedAt(null)
@@ -389,17 +445,19 @@ export function EngineerWorkspace({
     const requestId = selectedId
     try {
       const [mutations, workPackage] = await Promise.all([
-        offlineService.listMutations<QueuedResultCommand>({ workOrderId: requestId }),
-        offlineService.getPackage(requestId),
+        offlineService.listMutations<QueuedResultCommand>(
+          isSyncRoute || !requestId ? {} : { workOrderId: requestId },
+        ),
+        requestId ? offlineService.getPackage(requestId) : Promise.resolve(undefined),
       ])
-      if (selectedIdRef.current !== requestId) return
+      if (requestId && selectedIdRef.current !== requestId) return
       setOfflineMutations(mutations)
       setOfflinePackageReady(Boolean(workPackage))
       setOfflinePackagePreparedAt(workPackage?.preparedAt ?? null)
     } catch (nextError) {
-      if (selectedIdRef.current === requestId) setError(messageFromError(nextError))
+      if (!requestId || selectedIdRef.current === requestId) setError(messageFromError(nextError))
     }
-  }, [offlineService, selectedId])
+  }, [isSyncRoute, offlineService, selectedId])
 
   useEffect(() => {
     void offlineService.initialize().then(refreshOfflineState).catch((nextError) => {
@@ -426,10 +484,14 @@ export function EngineerWorkspace({
         repository.getFacilityHierarchy(facilityId),
         repository.listEquipment(facilityId),
         repository.listSensors(facilityId),
-        repository.listRisks({ facilityId }),
+        canReadRisks
+          ? repository.listRisks({ facilityId })
+          : Promise.resolve([]),
         repository.listIncidents(facilityId),
         repository.listWorkOrders({ facilityId }),
-        repository.getAuditTimeline('facility', facilityId),
+        canReadAudit
+          ? repository.getAuditTimeline('facility', facilityId)
+          : Promise.resolve([]),
       ])
       return {
         workOrder: order,
@@ -443,7 +505,7 @@ export function EngineerWorkspace({
         auditEvents,
       }
     },
-    [repository],
+    [canReadAudit, canReadRisks, repository],
   )
 
   const refreshTechnicalContext = useCallback(async () => {
@@ -503,15 +565,17 @@ export function EngineerWorkspace({
 
   const baseCommand = (order: WorkOrder, action: string, payloadSignature = '') => {
     const intent = JSON.stringify([order.id, order.version, action, payloadSignature])
-    let idempotencyKey = commandKeyByIntentRef.current.get(intent)
-    if (!idempotencyKey) {
-      idempotencyKey = createIdempotencyKey(order, action)
-      commandKeyByIntentRef.current.set(intent, idempotencyKey)
+    let meta = commandMetaByIntentRef.current.get(intent)
+    if (!meta) {
+      meta = {
+        idempotencyKey: createIdempotencyKey(order, action),
+        clientOccurredAt: repository.getSnapshot().demoClockIso,
+      }
+      commandMetaByIntentRef.current.set(intent, meta)
     }
     return {
       expectedVersion: order.version,
-      idempotencyKey,
-      clientOccurredAt: repository.getSnapshot().demoClockIso,
+      ...meta,
     }
   }
 
@@ -687,33 +751,37 @@ export function EngineerWorkspace({
       payload: { repairResult },
     }
 
+    const queueResult = async () => {
+      const workPackage = await offlineService.getPackage(actionOrder.id)
+      if (!workPackage) {
+        throw new Error(
+          'Офлайн-пакет отсутствует или срок его действия истёк. Отчёт не отправлен',
+        )
+      }
+      const queued = await offlineService.enqueue({
+        idempotencyKey: command.idempotencyKey,
+        kind: 'submit_engineer_result',
+        workOrderId: actionOrder.id,
+        engineerId: currentUser.id,
+        grantId: workPackage.grantId,
+        expectedVersion: actionOrder.version,
+        payload: command,
+      })
+      if (selectedIdRef.current !== actionOrder.id) return
+      if (queued.status === 'access_expired') {
+        throw new Error('Временный доступ истёк. Черновик сохранён на устройстве')
+      }
+      await offlineService.removeDraft(actionOrder.id).catch(() => undefined)
+      setResultDraft(null)
+      setWizardOpen(false)
+      navigate(`/my-work/${actionOrder.id}`, { replace: true })
+      setNotice('Отчёт сохранён на устройстве и ожидает синхронизации')
+      await refreshOfflineState()
+    }
+
     try {
       if (!online) {
-        const workPackage = await offlineService.getPackage(actionOrder.id)
-        if (!workPackage) {
-          throw new Error(
-            'Офлайн-пакет отсутствует или срок его действия истёк. Отчёт не отправлен',
-          )
-        }
-        const queued = await offlineService.enqueue({
-          idempotencyKey: command.idempotencyKey,
-          kind: 'submit_engineer_result',
-          workOrderId: actionOrder.id,
-          engineerId: currentUser.id,
-          grantId: workPackage.grantId,
-          expectedVersion: actionOrder.version,
-          payload: command,
-        })
-        if (selectedIdRef.current !== actionOrder.id) return
-        if (queued.status === 'access_expired') {
-          throw new Error('Временный доступ истёк. Черновик сохранён на устройстве')
-        }
-        await offlineService.removeDraft(actionOrder.id).catch(() => undefined)
-        setResultDraft(null)
-        setWizardOpen(false)
-        navigate(`/my-work/${actionOrder.id}`, { replace: true })
-        setNotice('Отчёт сохранён на устройстве и ожидает синхронизации')
-        await refreshOfflineState()
+        await queueResult()
         return
       }
 
@@ -734,6 +802,20 @@ export function EngineerWorkspace({
       setNotice('Отчёт передан диспетчеру на проверку')
       await invalidateAndRefresh()
     } catch (nextError) {
+      if (
+        online &&
+        isRepositoryError(nextError) &&
+        nextError.code === 'SOURCE_UNAVAILABLE'
+      ) {
+        setOnline(false)
+        try {
+          await queueResult()
+          return
+        } catch (queueError) {
+          if (selectedIdRef.current === actionOrder.id) setError(messageFromError(queueError))
+          return
+        }
+      }
       if (selectedIdRef.current === actionOrder.id) setError(messageFromError(nextError))
     } finally {
       setActionBusy(false)
@@ -741,8 +823,8 @@ export function EngineerWorkspace({
   }
 
   const syncOfflineChanges = async () => {
-    if (!online || !selectedOrder) return
-    const syncOrderId = selectedOrder.id
+    const syncOrderId = isSyncRoute ? undefined : selectedOrder?.id
+    if (!online || (!isSyncRoute && !syncOrderId)) return
     setSyncing(true)
     setError(null)
     setNotice(null)
@@ -789,11 +871,11 @@ export function EngineerWorkspace({
             }
           }
         },
-        { workOrderId: syncOrderId },
+        syncOrderId ? { workOrderId: syncOrderId } : {},
       )
-      if (selectedIdRef.current !== syncOrderId) return
+      if (syncOrderId && selectedIdRef.current !== syncOrderId) return
       await refreshOfflineState()
-      if (selectedIdRef.current !== syncOrderId) return
+      if (syncOrderId && selectedIdRef.current !== syncOrderId) return
       if (summary.counts.conflict > 0) {
         setError('Заявка изменилась на сервере. Локальный отчёт сохранён')
       } else if (summary.counts.access_expired > 0) {
@@ -805,7 +887,7 @@ export function EngineerWorkspace({
         await invalidateAndRefresh()
       }
     } catch (nextError) {
-      if (selectedIdRef.current === syncOrderId) setError(messageFromError(nextError))
+      if (!syncOrderId || selectedIdRef.current === syncOrderId) setError(messageFromError(nextError))
     } finally {
       setSyncing(false)
     }
@@ -961,7 +1043,7 @@ export function EngineerWorkspace({
             {isSyncRoute ? 'Синхронизация' : 'Мои работы'}
           </h1>
         </div>
-        <DemoBadge compact />
+        {runtime.mode === 'mock' ? <DemoBadge compact /> : <StatusBadge tone="info">Backend API</StatusBadge>}
       </header>
 
       <div className="connectivity-banner" data-offline={!online}>
@@ -972,7 +1054,7 @@ export function EngineerWorkspace({
             <WifiSlash size={20} weight="bold" aria-hidden="true" />
           )}
           <span>
-            <strong>{online ? 'Сеть доступна' : 'Демо: без сети'}</strong>
+            <strong>{online ? 'Сеть доступна' : 'Офлайн-режим'}</strong>
             <small>
               {online
                 ? 'Можно синхронизировать отчёты'
@@ -1018,6 +1100,18 @@ export function EngineerWorkspace({
               <Skeleton variant="rectangle" height={124} />
               <Skeleton variant="rectangle" height={124} />
             </div>
+          ) : assignmentsError ? (
+            <InlineAlert
+              tone="critical"
+              title="Назначения не загрузились"
+              action={
+                <Button variant="secondary" onClick={() => void refreshAssignments()}>
+                  Повторить
+                </Button>
+              }
+            >
+              {assignmentsError}
+            </InlineAlert>
           ) : filteredAssignments.length === 0 ? (
             <EmptyState
               icon={CheckCircle}
@@ -1035,6 +1129,7 @@ export function EngineerWorkspace({
                   disabled={actionBusy || syncing}
                   aria-current={selectedId === order.id ? 'true' : undefined}
                   onClick={() => {
+                    setOrderError(null)
                     setError(null)
                     setNotice(null)
                     navigate(`/my-work/${order.id}`)
@@ -1258,6 +1353,7 @@ export function EngineerWorkspace({
                           <Button
                             variant="secondary"
                             disabled={
+                              mutation.workOrderId !== selectedOrder.id ||
                               selectedOrder.accessGrant?.status !== 'active' ||
                               !selectedOrder.allowedActions.includes('submit_result')
                             }
@@ -1571,11 +1667,19 @@ export function EngineerWorkspace({
                                 <span>
                                   {sensor.lastReading
                                     ? `${sensor.lastReading.value} ${sensor.unit}, ${formatDateTime(sensor.lastReading.at)}`
-                                    : 'Последнее значение отсутствует'}
+                                    : sensor.lastValueText
+                                      ? `${sensor.lastValueText}, ${formatDateTime(sensor.updatedAt)}`
+                                      : 'Последнее значение отсутствует'}
                                 </span>
                               </div>
                               <StatusBadge
-                                tone={sensor.status === 'alarm' ? 'critical' : sensor.status === 'normal' ? 'success' : 'warning'}
+                                tone={sensor.status === 'alarm'
+                                  ? 'critical'
+                                  : sensor.status === 'normal'
+                                    ? 'success'
+                                    : sensor.status === 'unknown'
+                                      ? 'neutral'
+                                      : 'warning'}
                               >
                                 {SENSOR_STATUS_LABELS[sensor.status]}
                               </StatusBadge>
@@ -1680,7 +1784,7 @@ export function EngineerWorkspace({
 
               <p className="provenance-note">
                 <WarningCircle size={14} aria-hidden="true" />
-                Синтетические демо-данные. Не использовать для реальных работ
+                Источник: {selectedOrder.provenance.sourceLabel}
               </p>
             </div>
           ) : (
@@ -1688,21 +1792,55 @@ export function EngineerWorkspace({
               <EmptyState
                 icon={WarningCircle}
                 title="Заявка недоступна"
-                description="Возможно, назначение изменено или временный доступ завершён"
+                description={orderError ?? "Возможно, назначение изменено или временный доступ завершён"}
                 action={
-                  <Button variant="secondary" onClick={() => navigate('/my-work')}>
-                    Вернуться к списку
-                  </Button>
+                  <div className="inline-actions">
+                    <Button
+                      variant="secondary"
+                      onClick={() => void refreshSelectedOrder()}
+                    >
+                      Повторить
+                    </Button>
+                    <Button variant="secondary" onClick={() => navigate('/my-work')}>
+                      Вернуться к списку
+                    </Button>
+                  </div>
                 }
               />
-              {activeMutations.length > 0 && (
-                <InlineAlert
-                  tone="warning"
-                  title="Локальный отчёт сохранён"
-                >
-                  Доступ к объекту завершён, но введённые данные остались на устройстве. Их статус: {MUTATION_LABELS[activeMutations[0]!.status]}
-                </InlineAlert>
-              )}
+              {activeMutations.length > 0 ? (
+                <section className="surface engineer-sync" aria-labelledby="unavailable-sync-title">
+                  <div className="surface__header">
+                    <div className="engineer-section-heading">
+                      <CloudSlash size={22} weight="duotone" aria-hidden="true" />
+                      <h3 id="unavailable-sync-title">Локальные отчёты сохранены</h3>
+                    </div>
+                    <span className="engineer-sync__count">{activeMutations.length}</span>
+                  </div>
+                  <div className="surface__body engineer-sync__body">
+                    {activeMutations.map((mutation) => (
+                      <div className="engineer-sync-item" key={mutation.mutationId}>
+                        <div>
+                          <StatusBadge tone={mutationTone(mutation.status)}>
+                            {MUTATION_LABELS[mutation.status]}
+                          </StatusBadge>
+                          <small>Заявка {mutation.workOrderId}</small>
+                          <small>Сохранён {formatDateTime(mutation.createdAt)}</small>
+                        </div>
+                      </div>
+                    ))}
+                    {online && activeMutations.some((mutation) => ['pending', 'failed'].includes(mutation.status)) ? (
+                      <Button
+                        fullWidth
+                        disabled={syncing}
+                        loading={syncing}
+                        onClick={() => void syncOfflineChanges()}
+                      >
+                        Синхронизировать доступные отчёты
+                      </Button>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
             </div>
           )}
         </section>

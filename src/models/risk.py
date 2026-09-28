@@ -4,6 +4,7 @@
 (leaf 1.2.2) evaluates a group of events -- the real write path ticket 07
 left as an honest placeholder.
 """
+
 from datetime import datetime
 
 from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String
@@ -24,11 +25,21 @@ class Risk(Base):
     risk_type: Mapped[str] = mapped_column(String, index=True)
     target_type: Mapped[str] = mapped_column(String)
     target_id: Mapped[str] = mapped_column(String, index=True)
-    facility_id: Mapped[str | None] = mapped_column(ForeignKey("facilities.id"), nullable=True)
+    facility_id: Mapped[str | None] = mapped_column(
+        ForeignKey("facilities.id"), nullable=True
+    )
+    # Actual model snapshot time, not necessarily the operational wall clock.
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Historical demo provenance supplied by ML. None means no demo clock was declared.
+    demo_clock: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Legacy predictions with an unverifiable model clock remain auditable by
+    # id, but are excluded from the active queue and never suppress a refresh.
+    is_invalidated: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     lead_min_hours: Mapped[float] = mapped_column(Float)
     horizon_hours: Mapped[float] = mapped_column(Float)
-    prediction_window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    prediction_window_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
     prediction_window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     probability: Mapped[float] = mapped_column(Float)
     # Lower bound of risk_level (the frontend contract's meaning), not the model's threshold.

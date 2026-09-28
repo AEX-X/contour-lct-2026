@@ -6,18 +6,18 @@
 
 | Режим | Команда | Что нужно положить заранее | Прогнозы |
 |---|---|---|---|
-| Без ML | `docker compose up --build` | ничего | встроенный `StubPredictor` |
-| С ML-сервисом | `docker compose -f docker-compose.yml -f docker-compose.ml.yml up --build` | подготовленный журнал ML в `ml-data/` | обученные модели ML-команды |
+| Lite | `.\scripts\start-lite.ps1` | ничего | явно обозначенный `StubPredictor` |
+| Full | `.\scripts\start-full.ps1` | подготовленный журнал ML в `ml-data/` | обученные модели ML-команды |
+
+Используй скрипты, а не сырой `docker compose up`: они задают разные project names и volumes для Full и Lite, проверяют конфигурацию, ждут healthchecks и выполняют smoke-test
 
 ## Режим без ML
 
 ```
-git clone <адрес репозитория>
-cd <папка репозитория>
-docker compose up --build
+.\scripts\start-lite.ps1
 ```
 
-Поднимаются три контейнера:
+Поднимаются три контейнера. Frontend собирается первым stage образа `proxy` и доступен через тот же origin, что и API:
 
 | Контейнер | Что это | Снаружи |
 |---|---|---|
@@ -56,16 +56,16 @@ docker compose up --build
 ### Запуск
 
 ```
-docker compose -f docker-compose.yml -f docker-compose.ml.yml up --build
+.\scripts\start-full.ps1
 ```
 
 PowerShell, если данные не в `ml-data/`:
 
 ```
-$env:ML_DATA_DIR="D:/ml-prepared"; docker compose -f docker-compose.yml -f docker-compose.ml.yml up --build
+.\scripts\start-full.ps1 -MlDataDir "D:\ml-prepared"
 ```
 
-Порядок старта соблюдается сам: `app` ждёт, пока `ml` загрузит журнал и начнёт отвечать на `/health`. Это важно: backend запрашивает прогнозы один раз при старте. На полном журнале загрузка ML занимает от десятков секунд до нескольких минут; первая сборка образа ML (установка зависимостей) — несколько минут.
+Порядок старта соблюдается сам: `app` ждёт, пока `ml` загрузит журнал и начнёт отвечать на `/health`. Это важно: backend запрашивает прогнозы один раз при старте. На полном журнале загрузка ML и первичный расчёт рисков занимают от десятков секунд до нескольких минут; в Full overlay для этого задан отдельный 15-минутный healthcheck start period. Первая сборка образа ML с установкой зависимостей тоже может занять несколько минут
 
 Проверка: `GET https://localhost:8443/api/v1/risks` под `manager`. Прогнозы моделей видны по полю `model`: `hgb-v2-run002-…` — по датчикам, `hgb-object-run008-…` и `hgb-object-run009-…` — по объектам (`target.type = "facility"`).
 
@@ -78,22 +78,38 @@ $env:ML_DATA_DIR="D:/ml-prepared"; docker compose -f docker-compose.yml -f docke
 
 ## Общие переменные
 
-Задаются перед командой запуска или в файле `.env` рядом с `docker-compose.yml` (Docker Compose читает его сам). Полный список — в `README.md`, раздел «Конфигурация».
+Задаются перед командой запуска или в файле `.env` рядом с `docker-compose.yml`. Скрипты запуска читают тот же файл и передают его Compose явно. Приоритет: параметр скрипта, переменная текущего процесса, `.env`, значение по умолчанию. Полный список — в `README.md`, раздел «Конфигурация».
 
 | Переменная | Зачем менять |
 |---|---|
 | `HTTPS_PORT`, `HTTP_PORT` | порты 8443/8080 заняты |
 | `CORS_ALLOWED_ORIGINS` | адрес браузерного фронтенда, если он не на `localhost:3000`/`5173` |
-| `ML_PREDICTOR_URL` | ML-сервис запущен не в compose, а отдельно на хосте: `http://host.docker.internal:8090` (только в режиме без `docker-compose.ml.yml`) |
+| `VITE_SHOW_DEMO_CREDENTIALS` | `true` только для контролируемого хакатонного стенда; вне демо скрывает быстрый выбор аккаунтов |
+
+Lite всегда принудительно оставляет `ML_PREDICTOR_URL` пустым, даже если такая переменная случайно задана в оболочке. Full всегда использует внутренний адрес `http://ml:8090`. Внешний ML не является поддерживаемым режимом этих двух профилей
+
+## Backend-тесты
+
+Тесты нельзя запускать против рабочей базы: часть сценариев создаёт и изменяет записи. Сначала запусти Lite или Full, затем из корня репозитория выполни:
+
+```powershell
+.\scripts\test-backend.ps1 -Mode Lite
+# или, если запущен Full
+.\scripts\test-backend.ps1 -Mode Full
+```
+
+Скрипт создаёт базу со случайным именем, применяет в ней все миграции, запускает `pytest -q` внутри контейнера `app` и удаляет только созданную им базу даже при падении тестов. Рабочая БД выбранного режима не изменяется
 
 ## Остановка и сброс
 
 ```
-docker compose -f docker-compose.yml -f docker-compose.ml.yml down      # остановить (данные БД сохраняются)
-docker compose -f docker-compose.yml -f docker-compose.ml.yml down -v   # остановить и удалить БД и сертификат
+.\scripts\stop.ps1 -Mode Full
+.\scripts\stop.ps1 -Mode Lite
+.\scripts\reset.ps1 -Mode Full -Force
+.\scripts\reset.ps1 -Mode Lite -Force
 ```
 
-В режиме без ML — те же команды без `-f ... -f ...`.
+`stop` сохраняет базу и сертификат. `reset` удаляет volumes выбранного режима, но не изменяет файлы в `ml-data`
 
 ## Если что-то не так
 

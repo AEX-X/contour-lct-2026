@@ -14,6 +14,8 @@ class AuditFilter:
 
     user_id: str | None = None
     action: str | None = None
+    target_type: str | None = None
+    target_id: str | None = None
     occurred_from: datetime | None = None
     occurred_to: datetime | None = None
 
@@ -23,6 +25,10 @@ def _apply_filter(stmt: Select, criteria: AuditFilter) -> Select:
         stmt = stmt.where(AuditLogEntry.user_id == criteria.user_id)
     if criteria.action is not None:
         stmt = stmt.where(AuditLogEntry.action == criteria.action)
+    if criteria.target_type is not None:
+        stmt = stmt.where(AuditLogEntry.target_type == criteria.target_type)
+    if criteria.target_id is not None:
+        stmt = stmt.where(AuditLogEntry.target_id == criteria.target_id)
     if criteria.occurred_from is not None:
         stmt = stmt.where(AuditLogEntry.occurred_at >= criteria.occurred_from)
     if criteria.occurred_to is not None:
@@ -50,14 +56,18 @@ async def list_audit_entries(
         id of the last returned entry when more entries remain, else None.
     """
     total = (
-        await session.execute(_apply_filter(select(func.count()).select_from(AuditLogEntry), criteria))
+        await session.execute(
+            _apply_filter(select(func.count()).select_from(AuditLogEntry), criteria)
+        )
     ).scalar_one()
 
     page_stmt = _apply_filter(select(AuditLogEntry), criteria)
     if after_id is not None:
         page_stmt = page_stmt.where(AuditLogEntry.id < after_id)
     rows = (
-        await session.execute(page_stmt.order_by(AuditLogEntry.id.desc()).limit(limit + 1))
+        await session.execute(
+            page_stmt.order_by(AuditLogEntry.id.desc()).limit(limit + 1)
+        )
     ).scalars().all()
 
     items = list(rows[:limit])

@@ -1,4 +1,5 @@
 """Tests for GET /api/v1/risks/{risk_id} (leaf 1.3.1.2)."""
+
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -54,7 +55,9 @@ async def _add_risk(risk_id: str, facility_id: str | None) -> None:
 async def _login(username: str, password: str) -> str:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/auth/login", json={"username": username, "password": password})
+        response = await client.post(
+            "/api/v1/auth/login", json={"username": username, "password": password}
+        )
     assert response.status_code == 200
     return response.json()["token"]
 
@@ -62,7 +65,9 @@ async def _login(username: str, password: str) -> str:
 async def _get_detail(token: str, risk_id: str):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        return await client.get(f"/api/v1/risks/{risk_id}", headers={"Authorization": f"Bearer {token}"})
+        return await client.get(
+            f"/api/v1/risks/{risk_id}", headers={"Authorization": f"Bearer {token}"}
+        )
 
 
 @pytest.mark.asyncio
@@ -76,14 +81,36 @@ async def test_detail_includes_every_documented_field_with_nested_shape() -> Non
     body = response.json()
 
     for field in (
-        "id", "forecast_id", "risk_type", "target", "as_of", "lead_min_hours", "horizon_hours",
-        "prediction_window", "probability", "threshold", "risk_level", "priority_score",
-        "decision_status", "sla_due_at", "data_health", "model", "top_factors", "recommendation",
-        "version", "created_at", "updated_at",
+        "id",
+        "forecast_id",
+        "risk_type",
+        "target",
+        "as_of",
+        "lead_min_hours",
+        "horizon_hours",
+        "prediction_window",
+        "probability",
+        "threshold",
+        "risk_level",
+        "priority_score",
+        "decision_status",
+        "sla_due_at",
+        "data_health",
+        "model",
+        "top_factors",
+        "recommendation",
+        "is_invalidated",
+        "version",
+        "created_at",
+        "updated_at",
     ):
         assert field in body, f"missing field: {field}"
 
-    assert body["target"] == {"type": "sensor", "id": "sensor_risk_detail_full", "facility_id": "fac_5122"}
+    assert body["target"] == {
+        "type": "sensor",
+        "id": "sensor_risk_detail_full",
+        "facility_id": "fac_5122",
+    }
     assert set(body["prediction_window"].keys()) == {"start", "end"}
     assert body["version"] == 1
 

@@ -5,6 +5,7 @@ skills-lock.json
 .unlazy/
 .unlazy-hook-state.json
 .scratch/
+.cache/
 CLAUDE.md
 agents/
 # ==== Python ====
@@ -44,5 +45,6 @@ Thumbs.db
 # ==== Logs ====
 *.log
 
-# Prepared ML journal (large, not in git): see docs/COMPOSE.md
-ml-data/
+# Prepared ML journal (large, never stored in git)
+ml-data/*
+!ml-data/README.md

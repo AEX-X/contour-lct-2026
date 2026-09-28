@@ -14,7 +14,7 @@ from src.models.event import Event
 from src.models.hierarchy import Facility
 from src.models.risk import Risk
 from src.models.sensor import SensorChannel, SensorReading
-from src.services.ml_port import PredictionInput, PredictionResult
+from src.services.ml_port import DemoClock, PredictionInput, PredictionResult
 from src.services.ml_predictor_http import MLPredictorError
 from src.services.risk_sync import risk_type_for_system_type, sync_risks
 
@@ -109,6 +109,43 @@ async def test_one_group_produces_one_risk_and_links_all_its_events() -> None:
     assert risks[0].facility_id == "fac_risk_sync_group"
     assert risks[0].model == "test-model"
     assert risks[0].top_factors == ["test factor"]
+
+
+@pytest.mark.asyncio
+async def test_sensor_risk_preserves_historical_model_clock_and_operational_sla() -> None:
+    channel_id = await _seed_channel("model_clock", "fac_risk_sync_model_clock")
+    sensor_id = f"sensor_{channel_id}"
+    model_anchor = datetime(2026, 6, 20, tzinfo=timezone.utc)
+    model_as_of = model_anchor + timedelta(hours=3, minutes=15)
+    operational_now = datetime(2042, 1, 1, tzinfo=timezone.utc)
+    await _add_reading(channel_id, model_as_of, "model_clock")
+
+    predictor = _RecordingPredictor(
+        PredictionResult(
+            **{
+                **_fixed_result().__dict__,
+                "effective_as_of": model_as_of,
+                "demo_clock": DemoClock(
+                    requested_as_of_utc=operational_now,
+                    anchor_utc=model_anchor,
+                ),
+            }
+        )
+    )
+    async with async_session_factory() as session:
+        await sync_risks(session, predictor, now=operational_now)
+
+    [risk] = await _sensor_risks(sensor_id)
+    assert risk.as_of == model_as_of
+    assert risk.prediction_window_start == model_as_of + timedelta(hours=2)
+    assert risk.prediction_window_end == model_as_of + timedelta(hours=8)
+    assert risk.data_health == "fresh"
+    assert risk.sla_due_at == operational_now + timedelta(hours=4)
+    assert risk.created_at == operational_now
+    assert risk.demo_clock == {
+        "requested_as_of_utc": operational_now.isoformat(),
+        "anchor_utc": model_anchor.isoformat(),
+    }
 
 
 @pytest.mark.asyncio

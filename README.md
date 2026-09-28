@@ -1,185 +1,383 @@
-# Backend — сервис прогнозирования инцидентов Москоллектора
+# Contour
 
-Бэкенд-часть хакатонного MVP: REST API по контракту фронтенда, схема БД, RBAC, потоковый ETL, эмуляция внешних источников (СМВУ/ОДС/реестр оборудования/система заявок), ML Prediction Port + Stub Predictor, локальный жизненный цикл заявок на ремонт, журнал аудита и TLS. Подробнее о границах и терминологии — `CONTEXT.md`; о принятых архитектурных решениях — `docs/adr/`; о доменной архитектуре и способах обработки данных — `docs/ARCHITECTURE.md` и `docs/DATA_PROCESSING.md`; о безопасности (сверка с ТЗ по пунктам) — `docs/SECURITY.md`; о честных MVP-ограничениях — `docs/LIMITATIONS.md`.
+Единый локальный дистрибутив системы предиктивного обслуживания инженерной инфраструктуры АО «Москоллектор»
 
-## Запуск (с нуля)
+Один репозиторий содержит frontend, backend, модели ML и инфраструктуру запуска. Пользователь открывает один адрес, а внутренние компоненты работают в изолированной Docker-сети
 
-Подробная инструкция — какие файлы где должны лежать, оба режима (без ML и с ML-сервисом), переменные и разбор проблем — в **`docs/COMPOSE.md`**.
-
-```
-docker compose up --build                                                  # без ML (StubPredictor)
-docker compose -f docker-compose.yml -f docker-compose.ml.yml up --build   # с ML-сервисом, нужен журнал в ml-data/
-```
-
-В режиме без ML поднимутся три контейнера: `db` (PostgreSQL 16), `app` (FastAPI) и `proxy` (nginx с TLS). При старте `app` автоматически применяет миграции Alembic (`alembic upgrade head`), засеивает справочники и реальный датасет (объекты, каналы датчиков, операционное окно журнала событий), поднимает эмуляцию внешних источников (ОДС/реестр/заявки/replay СМВУ) и материализует события/прогнозы. `proxy` при первом запуске сам создаёт самоподписанный сертификат.
-
-API доступен только по HTTPS: **https://localhost:8443**. Порт 8080 отвечает перенаправлением на HTTPS. Приложение и база наружу напрямую не публикуются.
-
-Проверка, что всё поднялось (`-k` — потому что сертификат самоподписанный):
-
-```
-curl -k https://localhost:8443/health
-```
-
-Ожидаемый ответ: `{"status":"ok"}`.
-
-Остановка:
-
-```
-docker compose down
+```text
+Браузер
+   |
+   | https://localhost:8443
+   v
+Nginx gateway
+   |-- /                 -> React frontend
+   |-- /api/v1/*         -> FastAPI backend
+   |-- /health           -> FastAPI health
+   |-- /docs             -> Swagger UI
+   `-- /openapi.json     -> OpenAPI
+          |
+          +-- PostgreSQL
+          `-- ML service -> подготовленный журнал 2019-2026
 ```
 
-### Самоподписанный сертификат
+Наружу публикуются только порты `8080` и `8443`. PostgreSQL, FastAPI и ML не имеют host ports
 
-- Браузер при первом заходе покажет предупреждение о недоверенном сертификате — это ожидаемо, его можно принять для демо.
-- Для `curl` используйте ключ `-k`, для клиентов на Python/Node — отключение проверки сертификата только в демо-окружении.
-- Сертификат хранится в томе `proxy_certs` и переиспользуется при перезапусках. Чтобы поставить свой (например, выпущенный УЦ заказчика), положите `server.crt` и `server.key` в этот том; чтобы пересоздать самоподписанный — удалите том `proxy_certs`.
-- Если порты 8443/8080 заняты, задайте другие: `HTTPS_PORT=443 HTTP_PORT=80 docker compose up --build`.
+## Режимы запуска
 
-## API-контракт
+| Режим | Команда | Прогнозы | Данные |
+|---|---|---|---|
+| Full, основной | `.\scripts\start-full.ps1` | обученные ML-модели | нужны `2019.parquet` ... `2026.parquet` |
+| Lite, разработка | `.\scripts\start-lite.ps1` | явно обозначенный `StubPredictor` | дополнительные файлы не нужны |
 
-Swagger UI (интерактивная документация, тот же контракт, что видит фронтенд-команда): **https://localhost:8443/docs**
-Машиночитаемая спецификация: `https://localhost:8443/openapi.json` (актуальный снимок для пакета сдачи — `docs/openapi.json`).
+Full и Lite используют разные Docker project names, базы и TLS volumes. Поэтому данные StubPredictor не смешиваются с результатами настоящих моделей
 
-Основные группы эндпоинтов (`/api/v1/*`):
+`start-full.ps1` не переключается на заглушку при ошибке. Он останавливается, если нет любого годового Parquet, файл не имеет сигнатуру Parquet, ML не стал healthy или API не вернул прогноз реальной модели
 
-| Группа | Эндпоинты |
-|---|---|
-| Auth | `POST /auth/login`, `POST /auth/logout`, `GET /me` |
-| Справочники | `GET /config` |
-| Объекты | `GET /facilities`, `/facilities/{id}`, `/facilities/{id}/hierarchy`, `/facilities/{id}/layout` |
-| Датчики | `GET /sensors`, `/sensors/{id}`, `/sensors/{id}/series` |
-| События | `GET /events` |
-| Риски/прогнозы | `GET /risks`, `/risks/{id}`, `POST /risks/{id}/acknowledge\|reject\|defer` |
-| Заявки | `POST /work-orders`, `GET /work-orders` |
-| Статус источников | `GET /system/source-health`, `GET /system/scenarios`, `POST /system/scenarios/{id}/activate`, `POST`/`DELETE /system/source-health/{source}/degrade` |
-| Журнал аудита | `GET /audit` |
+## Требования
 
-Каждый ответ несёт заголовок `X-Trace-Id`; по нему запрос находится в журнале аудита.
+- Windows 10 или 11
+- Docker Desktop с Linux containers
+- Docker Compose v2
+- PowerShell 7 рекомендуется, Windows PowerShell 5.1 также поддерживается скриптами
+- свободные порты `8080` и `8443`
+- для Full режима достаточно места и памяти для загрузки подготовленного журнала
 
-### Обращение из браузерного фронтенда (CORS)
+Проверить Docker:
 
-Фронтенд с другого адреса может обращаться к API, если его адрес указан в `CORS_ALLOWED_ORIGINS` (через запятую, без завершающего `/`). В `docker compose` по умолчанию разрешены локальные dev-серверы `http://localhost:3000`, `http://localhost:5173` и `http://127.0.0.1:5173`; для развёрнутого фронта укажите его адрес:
-
-```
-CORS_ALLOWED_ORIGINS=https://front.example.ru docker compose up --build
+```powershell
+docker version
+docker compose version
+docker info
 ```
 
-Токен передаётся в заголовке `Authorization: Bearer <token>`; cookies не используются, поэтому в запросах из браузера не нужен `credentials: "include"`. Заголовок `X-Trace-Id` фронтенду доступен.
+Если `docker info` не отвечает, запусти Docker Desktop и дождись готовности Linux engine
 
-## Демо-пользователи
+## Быстрый запуск Full
 
-Сеятся автоматически при старте (см. `src/services/demo_seed.py`):
+### 1. Подготовь ML-данные
 
-| Логин | Пароль | Роль | Scope | Права |
-|---|---|---|---|---|
-| `manager` | `manager123` | Руководитель | все объекты | все, включая `system.manage` (управление эмуляцией) и `audit.read` (журнал аудита) |
-| `dispatcher` | `dispatcher123` | Диспетчер объекта | только `fac_5122`/`fac_5339` | `facility.read.assigned`, `sensor.read`, `risk.read`, `risk.acknowledge`, `work_order.read`, `work_order.create_draft` |
+В каталоге `ml-data` должны лежать восемь файлов:
 
-Сессия действует 480 минут (`SESSION_TTL_MINUTES`), `POST /auth/logout` завершает её сразу. После 5 неудачных попыток входа логин блокируется на время окна (ответ 429) — подробности в `docs/SECURITY.md`.
-
-## Локальная разработка без Docker
-
-```
-python -m venv .venv
-source .venv/Scripts/activate   # Windows Git Bash
-# .venv\Scripts\activate.bat    # Windows cmd
-pip install -r requirements.txt
-cp .env.example .env            # при необходимости поправить DATABASE_URL
-alembic upgrade head
-uvicorn src.main:app --reload
+```text
+ml-data/
+  2019.parquet
+  2020.parquet
+  2021.parquet
+  2022.parquet
+  2023.parquet
+  2024.parquet
+  2025.parquet
+  2026.parquet
 ```
 
-База из `docker compose` наружу не публикуется, поэтому для локального запуска нужен свой PostgreSQL, например:
+Проверить данные до сборки:
 
-```
-docker run -d --name mkl-dev-db -e POSTGRES_USER=mkl -e POSTGRES_PASSWORD=mkl -e POSTGRES_DB=mkl -p 5432:5432 postgres:16-alpine
-```
-
-Локальный `uvicorn` работает по обычному HTTP на `http://localhost:8000` — TLS обеспечивает только прокси в `docker compose`.
-
-## Тесты
-
-Внутри Docker (ничего устанавливать не нужно):
-
-```
-docker compose up -d --wait db
-docker compose run --rm --no-deps app sh -c "alembic upgrade head && pytest -q"
+```powershell
+.\scripts\check-ml-data.ps1
 ```
 
-Локально — `pytest` с доступной базой в `DATABASE_URL` (см. раздел выше).
+Если файлы находятся в другом месте, копировать их не нужно:
 
-## Конфигурация
+```powershell
+.\scripts\check-ml-data.ps1 -MlDataDir "D:\LCT\ml-prepared"
+```
 
-Все настройки читаются из переменных окружения (см. `.env.example`):
+Годовые Parquet не добавляются в Git, не копируются в Docker image и подключаются к ML-контейнеру read-only
 
-| Переменная | Назначение | По умолчанию |
+Если у тебя есть только восемь исходных архивов организаторов `ext-journal-2019.7z` ... `ext-journal-2026.7z`, подготовь файлы одной командой:
+
+```powershell
+.\scripts\prepare-ml-data.ps1 -SourceDir "C:\path\to\dataset"
+```
+
+Скрипт:
+
+- сверяет размер и SHA-256 каждого архива с `ml/docs/sources.json`
+- создаёт отдельное Python 3.12 окружение в gitignored `.cache`
+- распаковывает и обрабатывает по одному году, не удерживая весь архив на диске одновременно
+- вызывает официальную функцию `ml/outputs/ml-dataset/prepare.py`
+- включает подтверждённую точную дедупликацию только для 2019 и 2023 годов
+- записывает результат атомарно и при повторном запуске пропускает готовые корректные годы
+- не изменяет исходные архивы и не добавляет данные в Git
+
+Для первого запуска нужен доступ в интернет, чтобы установить зафиксированные `duckdb` и `py7zr`. Кэш можно вынести на другой диск:
+
+```powershell
+.\scripts\prepare-ml-data.ps1 `
+  -SourceDir "D:\LCT\dataset" `
+  -OutputDir "D:\LCT\ml-prepared" `
+  -CacheDir "E:\Contour-prepare-cache"
+```
+
+Если архивы защищены паролем, перед запуском задай его только в текущем процессе, не записывая в `.env` или Git:
+
+```powershell
+$env:CONTOUR_DATASET_PASSWORD="пароль"
+.\scripts\prepare-ml-data.ps1 -SourceDir "D:\LCT\dataset"
+Remove-Item Env:CONTOUR_DATASET_PASSWORD
+```
+
+### 2. Запусти продукт
+
+```powershell
+.\scripts\start-full.ps1
+```
+
+Или укажи внешний каталог:
+
+```powershell
+.\scripts\start-full.ps1 -MlDataDir "D:\LCT\ml-prepared"
+```
+
+Скрипт выполняет проверку данных, валидацию Compose, сборку четырёх сервисов, ожидание healthchecks и сквозной smoke-test
+
+### 3. Открой приложение
+
+- приложение: [https://localhost:8443](https://localhost:8443)
+- Swagger: [https://localhost:8443/docs](https://localhost:8443/docs)
+- healthcheck: [https://localhost:8443/health](https://localhost:8443/health)
+
+TLS-сертификат самоподписанный. При первом открытии браузер покажет предупреждение. Для локального демо его нужно принять один раз
+
+## Lite режим
+
+Lite нужен для разработки frontend и проверки API без тяжёлого журнала ML
+
+```powershell
+.\scripts\start-lite.ps1
+```
+
+При запуске скрипт явно предупреждает, что используется StubPredictor. Lite имеет отдельную базу `contour-lite`, поэтому после него Full не наследует тестовые прогнозы
+
+## Демо-вход
+
+| Логин | Пароль | Назначение |
 |---|---|---|
-| `DATABASE_URL` | строка подключения к PostgreSQL (asyncpg) | `postgresql+asyncpg://mkl:mkl@localhost:5432/mkl` |
-| `APP_ENV` | имя окружения | `local` |
-| `LOG_LEVEL` | уровень логирования | `INFO` |
-| `ML_PREDICTOR_URL` | URL внешнего ML-сервиса, реализующего ML Prediction Port (`docs/adr/0006-ml-port-bespoke-not-indastrics-shaped.md`). Если не задан — используется встроенный `StubPredictor` | не задан (используется stub) |
-| `REPLAY_SPEED_MULTIPLIER` | сколько виртуальных секунд эмуляции СМВУ проходит за одну реальную секунду | `360.0` |
-| `REPLAY_TICK_SECONDS` | интервал между тиками фонового replay-движка | `5.0` |
-| `SESSION_TTL_MINUTES` | срок жизни сессии после входа | `480` |
-| `LOGIN_MAX_FAILURES_PER_USERNAME` | неудачных входов на один логин в окне до блокировки | `5` |
-| `LOGIN_MAX_FAILURES_PER_IP` | неудачных входов с одного IP в окне до блокировки | `20` |
-| `LOGIN_FAILURE_WINDOW_SECONDS` | окно подсчёта неудачных входов, секунд | `900` |
-| `HTTPS_PORT` | порт хоста для HTTPS (docker compose) | `8443` |
-| `HTTP_PORT` | порт хоста для перенаправления с HTTP (docker compose) | `8080` |
-| `CORS_ALLOWED_ORIGINS` | адреса браузерного фронтенда, которым разрешены запросы к API, через запятую; пусто — CORS выключен | в `docker compose`: локальные dev-серверы; вне Docker: пусто |
+| `manager` | `manager123` | руководитель, доступ ко всем объектам |
+| `senior_dispatcher` | `senior123` | старший диспетчер нескольких закреплённых объектов |
+| `dispatcher` | `dispatcher123` | технический диспетчер одного объекта |
+| `coordinator` | `coordinator123` | координатор ремонтных работ и назначений |
+| `engineer` | `engineer123` | инженер выездной бригады с доступом по заявке |
 
-## Подключение ML-сервиса
+Пароли предназначены только для локального хакатонного стенда
 
-Backend взаимодействует с ML-частью через HTTP-контракт, а не через Python-интерфейс внутри бэкенда (`docs/adr/0001-backend-only-mvp-scope-with-integration-ports.md`, `docs/adr/0006-ml-port-bespoke-not-indastrics-shaped.md`). Вызовы идут только в одну сторону: **backend сам обращается к ML-сервису**, ML-сервису не нужен ни токен, ни доступ к API или базе backend.
+Быстрый выбор аккаунтов на экране входа включён только для demo build через `VITE_SHOW_DEMO_CREDENTIALS=true`. Для любого другого развёртывания установи `false`
 
-Что backend вызывает по адресу `ML_PREDICTOR_URL`:
+## Основной сквозной сценарий
 
-| Вызов | Когда | Контракт |
+1. Диспетчер объекта создаёт заявку на конкретный датчик, оборудование, участок или объект и отправляет её координатору
+2. Координатор выполняет триаж, при необходимости запрашивает уточнение, фиксирует приоритет и SLA, затем назначает инженера
+3. Инженер принимает работу, отмечает выезд и начало ремонта, при необходимости готовит офлайн-пакет, заполняет структурированный отчёт и синхронизирует его
+4. Диспетчер проверяет результат, возвращает работу на доработку или закрывает заявку
+5. Руководитель видит все объекты, аналитику, SLA, аудит и может отменить заявку либо зарегистрировать управленческий override
+
+Статусы не меняются автоматически по времени. Каждое действие проходит RBAC и scope-проверку, optimistic locking по `version`, idempotency и append-only аудит
+
+## Управление
+
+Проверить уже запущенный стенд:
+
+```powershell
+.\scripts\smoke-test.ps1 -Mode Full
+.\scripts\smoke-test.ps1 -Mode Lite
+```
+
+Остановить контейнеры без удаления БД:
+
+```powershell
+.\scripts\stop.ps1 -Mode Full
+.\scripts\stop.ps1 -Mode Lite
+.\scripts\stop.ps1 -Mode All
+```
+
+Полностью удалить БД и локальный TLS-сертификат выбранного режима:
+
+```powershell
+.\scripts\reset.ps1 -Mode Full -Force
+.\scripts\reset.ps1 -Mode Lite -Force
+.\scripts\reset.ps1 -Mode All -Force
+```
+
+Reset не удаляет и не изменяет файлы в `ml-data`
+
+## Что проверяет smoke-test
+
+- `/health` отвечает `status: ok`
+- gateway отдаёт настоящий frontend, а не API-ответ
+- авторизация `manager` проходит через FastAPI
+- `/api/v1/me` и `/api/v1/risks` доступны с bearer token
+- Full backend действительно настроен на `http://ml:8090`
+- backend видит внутренний ML healthcheck
+- внутренний ML `/quality` отдаёт отчёты `incident` и `neispraven`
+- Full API содержит прогноз хотя бы одной модели, отличной от `stub-v1`
+- Full база не содержит смешанных прогнозов StubPredictor
+- Full API явно отдаёт исторический `demo_clock`, а `as_of` и начало окна не подменены текущим временем
+- все актуальные real-model прогнозы имеют `demo_clock`, а старые непроверяемые записи помечены неактуальными и исключены из очереди
+- Lite backend не имеет `ML_PREDICTOR_URL`
+- gateway отдаёт ограничивающий Content Security Policy
+- Swagger UI и её JS/CSS загружаются локально с того же origin, без внешнего CDN
+- 20 независимых сессий пяти ролей одновременно проходят `/me` и scope-фильтрованный каталог объектов
+
+## Сборка и маршрутизация
+
+`proxy/Dockerfile` является multi-stage образом:
+
+1. Node 22 выполняет `npm ci` и production build frontend
+2. сборка получает `VITE_CONTOUR_DATA_MODE=api`
+3. API base URL фиксируется как same-origin `/api/v1`
+4. в финальный Nginx image копируются `frontend/dist/client` и зафиксированные локальные assets Swagger UI
+
+Nginx обслуживает SPA через `try_files ... /index.html`, но API, healthcheck, Swagger и OpenAPI описаны отдельными location. Ошибка API поэтому никогда не превращается в `index.html`
+
+Кэширование разделено:
+
+- `/assets/*` с content hash кэшируются на год как immutable
+- `index.html` и `sw.js` не кэшируются
+- API, healthcheck и документация получают `Cache-Control: no-store`
+
+## Сервисы
+
+| Сервис | Назначение | Доступ с хоста |
 |---|---|---|
-| `POST /predict` | при старте, один раз на каждый канал с тревогами без прогноза | `PredictionInput` / `PredictionResult` в `src/services/ml_port.py` |
-| `POST /risk_map` с `target` = `incident` и `failure` | один раз при старте | ответ со списком `objects`; объект с `alert` становится риском по объекту (`target_type = "facility"`), см. `src/services/object_risk_sync.py` |
+| `proxy` | frontend, TLS и reverse proxy | `8080`, `8443` |
+| `app` | FastAPI, миграции, RBAC, риски, заявки, аудит | нет |
+| `db` | PostgreSQL 16 | нет |
+| `ml` | модели каналов, объектов, насосов и `/quality` | нет, только Full |
 
-Без `ML_PREDICTOR_URL` backend работает на встроенном `StubPredictor`, риски по объектам не создаются.
+Startup order контролируется healthchecks:
 
-### Где код ML
-
-Код ML-сервиса, обученные модели и калибровки лежат в папке **`ml/`** — это копия репозитория ML-команды [lex4ssss/LCT-ML](https://github.com/lex4ssss/LCT-ML), подключённая через `git subtree`. Отдельно клонировать ничего не нужно. Подробности о моделях и их качестве — `ml/README.md` и `ml/outputs/ml-service/README.md`.
-
-Обновить `ml/` после изменений у ML-команды:
-
-```
-git subtree pull --prefix=ml https://github.com/lex4ssss/LCT-ML.git main --squash
+```text
+db healthy ------> app healthy ------> proxy healthy
+ml healthy --^         Full only
 ```
 
-### Запуск вместе с ML-сервисом
+Backend начинает первичную синхронизацию прогнозов только после готовности ML. Proxy стартует только после готовности backend
 
+В Full режиме первичный реальный расчёт входит в readiness backend и может занимать несколько минут. Healthcheck учитывает это отдельным 15-минутным start period, а скрипт запуска ждёт готовность до 20 минут
+
+## Переменные окружения
+
+При необходимости скопируй `.env.example` в `.env`. PowerShell-скрипты и Compose используют один файл с приоритетом: параметр скрипта, переменная текущего процесса, `.env`, значение по умолчанию
+
+| Переменная | Значение по умолчанию | Назначение |
+|---|---|---|
+| `HTTP_PORT` | `8080` | HTTP с перенаправлением на HTTPS |
+| `HTTPS_PORT` | `8443` | единая HTTPS-точка входа |
+| `ML_DATA_DIR` | `./ml-data` | каталог восьми годовых Parquet |
+| `ML_DEMO_ANCHOR` | `2026-06-20T00:00:00` | точка времени внутри исторического журнала |
+| `POSTGRES_USER` | `mkl` | локальный пользователь БД |
+| `POSTGRES_PASSWORD` | `mkl` | локальный пароль БД |
+| `POSTGRES_DB` | `mkl` | локальная база |
+| `CORS_ALLOWED_ORIGINS` | пусто | нужен только отдельному dev frontend |
+| `VITE_SHOW_DEMO_CREDENTIALS` | `true` | быстрый выбор пяти локальных demo-аккаунтов; вне стенда установить `false` |
+
+Встроенный frontend и API имеют общий origin, поэтому CORS для основного запуска не требуется
+
+## Ручные Compose-команды
+
+Основной путь на Windows это скрипты выше. Для диагностики можно запускать Compose напрямую
+
+Full:
+
+```powershell
+$env:ML_DATA_DIR="D:\LCT\ml-prepared"
+docker compose --project-name contour-full -f docker-compose.yml -f docker-compose.ml.yml config
+docker compose --project-name contour-full -f docker-compose.yml -f docker-compose.ml.yml up --build
 ```
-docker compose -f docker-compose.yml -f docker-compose.ml.yml up --build
+
+Lite:
+
+```powershell
+docker compose --project-name contour-lite -f docker-compose.yml config
+docker compose --project-name contour-lite -f docker-compose.yml up --build
 ```
 
-Файл `docker-compose.ml.yml` добавляет контейнер `ml` (образ собирается из `ml/`, `deploy/ml.Dockerfile`) и сам направляет backend на `http://ml:8090`; backend ждёт, пока модель загрузится. **Перед запуском** нужно положить подготовленный журнал ML-команды — файлы `2019.parquet` … `2026.parquet` — в папку `ml-data/` (в git её нет из-за размера). Какие файлы, откуда их взять и что делать, если что-то не так, — в `docs/COMPOSE.md`.
+Не запускай Full и Lite одновременно с одинаковыми `HTTP_PORT` и `HTTPS_PORT`
 
-ML-разработчикам: сервис можно запускать и на хосте (`--host 0.0.0.0 --port 8090 --demo-anchor 2026-06-20T00:00:00`, команда — в `ml/outputs/ml-service/README.md`), а backend — обычным `docker compose up` с `ML_PREDICTOR_URL=http://host.docker.internal:8090`.
+## Локальная разработка frontend
 
-### Поведение при ошибках ML
+Backend и база могут работать в Lite, а Vite отдельно на хосте:
 
-- Ответ ML с ошибкой (например, `422 insufficient_data` для канала без свежих данных) или недоступный сервис не роняют backend: канал пропускается, в лог пишется предупреждение с числом пропущенных каналов, курсор событий сдвигается, повторных запросов по кругу нет.
-- Если `/risk_map` недоступен или ответил некорректно, риски по объектам не создаются (предупреждение в логе), остальной старт продолжается.
-- Канал, по которому модель ответила `alert = false`, риска не получает и повторно не запрашивается.
+```powershell
+.\scripts\start-lite.ps1
+cd frontend
+npm ci
+$env:VITE_CONTOUR_DATA_MODE="api"
+$env:VITE_CONTOUR_API_BASE_URL="/api/v1"
+$env:CONTOUR_API_PROXY_TARGET="https://localhost:8443"
+npm run dev
+```
 
-### Уровни риска: по порогу модели
+Для отдельного Vite origin добавь его в `CORS_ALLOWED_ORIGINS`. Самостоятельная production-сборка frontend:
 
-У каждой модели ML свой рабочий порог (около 0,15 у канальной, 0,65 и 0,56 у моделей по объектам), поэтому общая шкала вероятности не подходит. Уровень считается от тревоги самой модели (правило согласовано с ML-командой, отдаётся в `GET /config` как `model_alert_rule`):
+```powershell
+cd frontend
+npm run typecheck
+npm run lint
+npm test -- --run
+npm run build
+npm run test:sites
+npm audit --omit=dev
+```
 
-| Условие | Уровень |
-|---|---|
-| модель не подняла тревогу (`alert = false`) | риск не создаётся |
-| тревога, вероятность ниже 0,85 | «Средний» |
-| тревога, вероятность от 0,85 | «Высокий» |
+Backend-тесты требуют PostgreSQL и описаны в `docs/COMPOSE.md`
 
-- «Критический» из прогнозов ML не выдаётся.
-- SLA — треть горизонта прогноза: 8 ч для прогноза на 24 ч, 24 ч для 72 ч, 56 ч для 7 суток. Реагировать нужно до начала окна прогноза, а не к его концу.
-- В `/risks` поле `threshold` — нижняя граница уровня (0,85 для «Высокого», порог модели для «Среднего»); отдельно отдаются `alert` и `model_threshold`.
+## Частые проблемы
 
-**Поля от ML-сервиса.** Сервис ML-команды в каждом ответе `/predict` и каждой строке `/risk_map` присылает `alert` (boolean), `model_threshold` (порог в единицах вероятности: 0,147 у модели по датчикам, 0,652 и 0,559 у моделей по объектам) и `horizon_hours`. Уровень решает поле `alert`, а не сравнение вероятности с порогом. Поля неверного типа считаются ошибкой ответа: канал пропускается. Общая шкала 0,3 / 0,6 / 0,85 с SLA по уровню остаётся только для прогнозов без `alert` — у встроенного `StubPredictor` или у ML-сервиса, который эти поля не присылает; у таких рисков `alert = null`.
+### Docker Engine недоступен
+
+Запусти Docker Desktop. Команда `docker info` должна завершаться без ошибки
+
+### Full не проходит проверку данных
+
+Проверь имена `2019.parquet` ... `2026.parquet`. Скрипт также проверяет сигнатуру `PAR1` в начале и конце каждого файла, поэтому пустой или недописанный файл не будет принят
+
+### ML долго становится healthy
+
+Загрузка полного журнала может занимать несколько минут. Посмотри состояние и логи:
+
+```powershell
+docker compose --project-name contour-full -f docker-compose.yml -f docker-compose.ml.yml ps
+docker compose --project-name contour-full -f docker-compose.yml -f docker-compose.ml.yml logs ml
+```
+
+### Порт занят
+
+Задай другие host ports в текущей PowerShell-сессии:
+
+```powershell
+$env:HTTP_PORT="18080"
+$env:HTTPS_PORT="18443"
+.\scripts\start-full.ps1
+```
+
+### Браузер показывает старый frontend
+
+Перезагрузи страницу с очисткой кэша и удали service worker для origin `https://localhost:8443`. `index.html` и `sw.js` на gateway уже отдаются без кэширования
+
+### Full smoke-test нашёл `stub-v1`
+
+Full и Lite должны запускаться только через свои скрипты. Миграция автоматически архивирует старые real-model прогнозы без проверяемого model clock и пересчитывает их, поэтому обычный перезапуск не требует удаления базы. Сброс нужен только если в Full volume действительно смешались данные StubPredictor:
+
+```powershell
+.\scripts\reset.ps1 -Mode Full -Force
+.\scripts\start-full.ps1
+```
+
+## Структура
+
+```text
+frontend/                 React/Vite frontend
+src/                      FastAPI backend
+alembic/                  миграции БД
+ml/                       код и артефакты ML subtree
+ml-data/                  локальные Parquet, gitignored
+proxy/                    gateway Dockerfile и Nginx template
+deploy/ml.Dockerfile      ML image
+scripts/                  Windows-команды запуска и проверки
+docker-compose.yml        общий стек и Lite-конфигурация
+docker-compose.ml.yml     Full ML overlay
+VERSIONS.md               исходные версии компонентов
+```
+
+Архитектурные решения backend находятся в `docs/adr`, контракт API в `docs/openapi.json`, ограничения MVP в `docs/LIMITATIONS.md`, а версии исходных репозиториев в `VERSIONS.md`

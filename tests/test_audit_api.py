@@ -29,16 +29,24 @@ async def _request(method: str, path: str, token: str, params: dict | None = Non
         return await client.request(method, path, headers={"Authorization": f"Bearer {token}"}, params=params)
 
 
-async def _seed_entries(user_id: str, actions: list[str]) -> None:
+async def _seed_entries(
+    user_id: str,
+    actions: list[str],
+    *,
+    targets: list[tuple[str | None, str | None]] | None = None,
+) -> None:
     """Journal rows for a unique actor, one minute apart, oldest first."""
     async with async_session_factory() as session:
         for i, action in enumerate(actions):
+            target_type, target_id = targets[i] if targets else (None, None)
             session.add(
                 AuditLogEntry(
                     occurred_at=_BASE_TIME + timedelta(minutes=i),
                     user_id=user_id,
                     username=user_id,
                     action=action,
+                    target_type=target_type,
+                    target_id=target_id,
                     result="success",
                     status_code=200,
                     ip="127.0.0.1",
@@ -88,6 +96,48 @@ async def test_action_filter_narrows_results() -> None:
     body = response.json()
     assert body["meta"]["total"] == 2
     assert {e["action"] for e in body["data"]} == {"POST /x"}
+
+
+@pytest.mark.asyncio
+async def test_target_filters_are_applied_by_server() -> None:
+    actor = _unique_user()
+    await _seed_entries(
+        actor,
+        ["POST /work-orders", "POST /work-orders", "PATCH /facilities"],
+        targets=[
+            ("work_order", "wo_target_a"),
+            ("work_order", "wo_target_b"),
+            ("facility", "fac_target_a"),
+        ],
+    )
+    token = await _login("manager", "manager123")
+
+    by_type = await _request(
+        "GET",
+        "/api/v1/audit",
+        token,
+        {"user_id": actor, "target_type": "work_order"},
+    )
+    assert by_type.status_code == 200, by_type.text
+    assert by_type.json()["meta"]["total"] == 2
+    assert {item["target_id"] for item in by_type.json()["data"]} == {
+        "wo_target_a",
+        "wo_target_b",
+    }
+
+    exact_target = await _request(
+        "GET",
+        "/api/v1/audit",
+        token,
+        {
+            "user_id": actor,
+            "target_type": "work_order",
+            "target_id": "wo_target_b",
+        },
+    )
+    assert exact_target.status_code == 200, exact_target.text
+    assert exact_target.json()["meta"]["total"] == 1
+    assert exact_target.json()["data"][0]["target_id"] == "wo_target_b"
 
 
 @pytest.mark.asyncio

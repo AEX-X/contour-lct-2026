@@ -1,4 +1,5 @@
 """FastAPI application entrypoint."""
+
 import asyncio
 import logging
 from collections.abc import AsyncIterator
@@ -14,29 +15,32 @@ from src.api.auth import router as auth_router
 from src.api.config import router as config_router
 from src.api.events import router as events_router
 from src.api.facilities import router as facilities_router
-from src.api.risks import router as risks_router
-from src.api.work_orders import router as work_orders_router
 from src.api.hierarchy import router as hierarchy_router
 from src.api.layout import router as layout_router
 from src.api.me import router as me_router
+from src.api.risks import router as risks_router
 from src.api.sensor_series import router as sensor_series_router
 from src.api.sensors import router as sensors_router
 from src.api.system import router as system_router
+from src.api.work_orders import router as work_orders_router
 from src.config import get_settings
 from src.cors import install_cors, parse_origins
 from src.db import async_session_factory, get_session
 from src.errors import register_exception_handlers
 from src.services.audit_recorder import AuditMiddleware
 from src.services.demo_seed import seed_demo_users
-from src.services.equipment_registry_provider import generate_equipment_registry
+from src.services.equipment_registry_provider import (
+    generate_equipment_registry,
+    materialize_equipment_hierarchy,
+)
 from src.services.event_etl import ingest_event_log
 from src.services.event_sync import sync_events
+from src.services.facility_seed import seed_facility_catalogue
 from src.services.ml_predictor_factory import get_object_risk_client, get_predictor
 from src.services.object_risk_sync import ObjectRiskError, sync_object_risks
-from src.services.risk_sync import sync_risks
-from src.services.facility_seed import seed_facility_catalogue
 from src.services.ods_journal_provider import generate_ods_journal
 from src.services.replay_engine import run_replay_loop
+from src.services.risk_sync import sync_risks
 from src.services.sensor_channel_seed import seed_sensor_channel_catalogue
 from src.services.work_order_backlog_provider import generate_work_order_backlog
 
@@ -55,6 +59,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await seed_demo_users(session)
         await generate_ods_journal(session)
         await generate_equipment_registry(session)
+        await materialize_equipment_hierarchy(session)
         await generate_work_order_backlog(session)
         await sync_events(session)
         await sync_risks(session, get_predictor())
@@ -64,7 +69,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
                 try:
                     await sync_object_risks(session, object_client)
                 except ObjectRiskError as exc:
-                    logging.getLogger(__name__).warning("object risk sync skipped: %s", exc)
+                    logging.getLogger(__name__).warning(
+                        "object risk sync skipped: %s", exc
+                    )
 
     replay_task = asyncio.create_task(run_replay_loop(async_session_factory))
     try:
@@ -73,7 +80,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         replay_task.cancel()
 
 
-app = FastAPI(title="Moskollektor Backend", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Moskollektor Backend",
+    version="0.1.0",
+    lifespan=lifespan,
+    # The edge proxy serves a self-hosted Swagger UI under the strict CSP.
+    # FastAPI still owns the OpenAPI document at /openapi.json.
+    docs_url=None,
+    redoc_url=None,
+)
 app.add_middleware(AuditMiddleware)
 # Added last, so it is the outermost middleware: CORS headers also land on error responses.
 install_cors(app, parse_origins(get_settings().cors_allowed_origins))

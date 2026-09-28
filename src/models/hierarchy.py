@@ -5,7 +5,8 @@ depth is never hardcoded — see `BACKEND_REQUIREMENTS_FROM_FRONTEND_TZ.md`
 section 6.2. `Facility.district_id` reuses the `District` table from
 `src/models/auth.py` per `docs/adr/0007-leaf-rows-are-facilities-level2-are-districts.md`.
 """
-from sqlalchemy import ForeignKey, String
+
+from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base
@@ -19,7 +20,13 @@ class Facility(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     display_name: Mapped[str] = mapped_column(String)
     facility_type: Mapped[str] = mapped_column(String)
-    district_id: Mapped[str | None] = mapped_column(ForeignKey("districts.id"), nullable=True)
+    district_id: Mapped[str | None] = mapped_column(
+        ForeignKey("districts.id"), nullable=True
+    )
+    responsible_dispatcher_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
 
 
 class HierarchyNode(Base):
@@ -28,7 +35,9 @@ class HierarchyNode(Base):
     __tablename__ = "hierarchy_nodes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    parent_id: Mapped[str | None] = mapped_column(ForeignKey("hierarchy_nodes.id"), nullable=True)
+    parent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("hierarchy_nodes.id"), nullable=True
+    )
     facility_id: Mapped[str] = mapped_column(ForeignKey("facilities.id"), index=True)
     entity_type: Mapped[str] = mapped_column(String)
     entity_id: Mapped[str] = mapped_column(String)

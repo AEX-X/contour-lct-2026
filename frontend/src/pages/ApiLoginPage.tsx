@@ -3,6 +3,16 @@ import { useState, type FormEvent } from 'react'
 import type { RepositoryAuthCredentials, RepositoryRuntimeInfo } from '../repositories'
 import { Button, InlineAlert, StatusBadge } from '../shared/ui'
 
+const demoAccounts = [
+  { label: 'Руководитель', username: 'manager', password: 'manager123' },
+  { label: 'Старший диспетчер', username: 'senior_dispatcher', password: 'senior123' },
+  { label: 'Диспетчер объекта', username: 'dispatcher', password: 'dispatcher123' },
+  { label: 'Координатор', username: 'coordinator', password: 'coordinator123' },
+  { label: 'Инженер', username: 'engineer', password: 'engineer123' },
+] as const
+
+const showDemoAccounts = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEMO_CREDENTIALS === 'true'
+
 export function ApiLoginPage({
   runtime,
   onLogin,
@@ -57,6 +67,27 @@ export function ApiLoginPage({
           </InlineAlert>
         ) : null}
         <form className="api-login-form" onSubmit={handleSubmit}>
+          {showDemoAccounts ? (
+            <fieldset className="api-login-profiles">
+              <legend>Демонстрационные роли</legend>
+              <div>
+                {demoAccounts.map((account) => (
+                  <button
+                    key={account.username}
+                    type="button"
+                    disabled={pending}
+                    onClick={() => {
+                      setUsername(account.username)
+                      setPassword(account.password)
+                      setError(null)
+                    }}
+                  >
+                    {account.label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          ) : null}
           <div className="field">
             <label htmlFor="api-username">Логин</label>
             <input

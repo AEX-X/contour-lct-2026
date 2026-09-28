@@ -1,33 +1,38 @@
-"""Tests for status_for_elapsed / sync_work_order_statuses (leaf 1.1.2)."""
+"""Regression tests: wall-clock time must never mutate a work order."""
+
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import select
 
 from src.db import async_session_factory
 from src.models.auth import User
 from src.models.work_order import WorkOrder
-from src.services.work_order_lifecycle import status_for_elapsed, sync_work_order_statuses
+from src.services.work_order_lifecycle import (
+    status_for_elapsed,
+    sync_work_order_statuses,
+)
 
 
-def test_status_for_elapsed_walks_the_full_chain_in_order() -> None:
+def test_status_for_elapsed_is_a_non_advancing_compatibility_shim() -> None:
     created_at = datetime(2046, 1, 1, tzinfo=timezone.utc)
     assert status_for_elapsed(created_at, created_at) == "draft"
     assert status_for_elapsed(created_at, created_at + timedelta(minutes=4)) == "draft"
-    assert status_for_elapsed(created_at, created_at + timedelta(minutes=5)) == "ready"
-    assert status_for_elapsed(created_at, created_at + timedelta(minutes=19)) == "ready"
-    assert status_for_elapsed(created_at, created_at + timedelta(minutes=20)) == "assigned"
-    assert status_for_elapsed(created_at, created_at + timedelta(minutes=49)) == "assigned"
-    assert status_for_elapsed(created_at, created_at + timedelta(minutes=50)) == "in_progress"
-    assert status_for_elapsed(created_at, created_at + timedelta(minutes=109)) == "in_progress"
-    assert status_for_elapsed(created_at, created_at + timedelta(minutes=110)) == "completed"
-    assert status_for_elapsed(created_at, created_at + timedelta(days=30)) == "completed"  # never regresses/overshoots
+    assert status_for_elapsed(created_at, created_at + timedelta(minutes=5)) == "draft"
+    assert status_for_elapsed(created_at, created_at + timedelta(days=30)) == "draft"
 
 
 async def _seed_user(user_id: str) -> None:
     async with async_session_factory() as session:
         if await session.get(User, user_id) is None:
-            session.add(User(id=user_id, username=user_id, password_hash="x", display_name=user_id, role="test"))
+            session.add(
+                User(
+                    id=user_id,
+                    username=user_id,
+                    password_hash="x",
+                    display_name=user_id,
+                    role="test",
+                )
+            )
             await session.commit()
 
 
@@ -56,18 +61,20 @@ async def _insert(work_order_id: str, created_at: datetime, status: str) -> None
 
 
 @pytest.mark.asyncio
-async def test_sync_advances_eligible_rows_and_reports_the_changed_count() -> None:
+async def test_sync_is_a_noop_and_preserves_draft() -> None:
     await _seed_user("usr_wo_lifecycle_test")
     created_at = datetime(2047, 1, 1, tzinfo=timezone.utc)
     await _insert("wo_lifecycle_sync_1", created_at, "draft")
 
     async with async_session_factory() as session:
-        changed = await sync_work_order_statuses(session, now=created_at + timedelta(minutes=25))
+        changed = await sync_work_order_statuses(
+            session, now=created_at + timedelta(minutes=25)
+        )
 
-    assert changed >= 1
+    assert changed == 0
     async with async_session_factory() as session:
         work_order = await session.get(WorkOrder, "wo_lifecycle_sync_1")
-    assert work_order.status == "assigned"  # 25 min elapsed -> past the 20-min assigned threshold
+    assert work_order.status == "draft"
 
 
 @pytest.mark.asyncio
@@ -82,7 +89,9 @@ async def test_sync_never_touches_cancelled_or_integration_error() -> None:
 
     async with async_session_factory() as session:
         cancelled = await session.get(WorkOrder, "wo_lifecycle_cancelled")
-        integration_error = await session.get(WorkOrder, "wo_lifecycle_integration_error")
+        integration_error = await session.get(
+            WorkOrder, "wo_lifecycle_integration_error"
+        )
     assert cancelled.status == "cancelled"
     assert integration_error.status == "integration_error"
 

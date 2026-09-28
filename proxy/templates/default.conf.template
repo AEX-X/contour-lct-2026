@@ -1,10 +1,23 @@
-# Rendered by the nginx image entrypoint (envsubst replaces only ${HTTPS_PORT}; nginx $variables stay intact).
+upstream contour_api {
+    server app:8000;
+    keepalive 16;
+}
 
 server {
     listen 80;
     server_name _;
     server_tokens off;
-    return 301 https://$host:${HTTPS_PORT}$request_uri;
+
+    # The container healthcheck must not depend on TLS or backend readiness.
+    location = /proxy-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 301 https://$host:${HTTPS_PORT}$request_uri;
+    }
 }
 
 server {
@@ -12,10 +25,11 @@ server {
     server_name _;
     server_tokens off;
 
+    root /usr/share/nginx/html;
+    index index.html;
+
     ssl_certificate     /etc/nginx/certs/server.crt;
     ssl_certificate_key /etc/nginx/certs/server.key;
-
-    # TZ section 11: transport encryption TLS 1.2 and above only.
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
@@ -23,12 +37,102 @@ server {
 
     client_max_body_size 10m;
 
-    location / {
-        proxy_pass http://app:8000;
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # API paths are never handled by the SPA fallback and are never cached.
+    location ^~ /api/ {
+        proxy_pass http://contour_api;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        # Overwrite (not append): the client cannot inject a fake address into the audit journal.
+        proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 90s;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location = /api {
+        proxy_pass http://contour_api/api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Connection "";
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location = /health {
+        proxy_pass http://contour_api/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Connection "";
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+    }
+
+    # Swagger UI assets are bundled into the proxy image. This keeps the
+    # documentation usable under the same strict self-only CSP as the app.
+    location = /docs {
+        try_files /docs/index.html =404;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location = /docs/ {
+        return 308 /docs;
+    }
+
+    location ^~ /docs-assets/ {
+        try_files $uri =404;
+        expires 1y;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    location = /openapi.json {
+        proxy_pass http://contour_api/openapi.json;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Connection "";
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-store" always;
+    }
+
+    # Vite fingerprints bundled assets, so they may be cached immutably.
+    location ^~ /assets/ {
+        try_files $uri =404;
+        expires 1y;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    location = /sw.js {
+        try_files $uri =404;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    location = /index.html {
+        try_files $uri =404;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    # Client-side routes fall back to index.html. API and documentation paths
+    # above are exact/prefix matches and can never fall through here.
+    location / {
+        try_files $uri $uri/ /index.html;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache";
     }
 }

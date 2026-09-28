@@ -55,6 +55,11 @@ async def test_predict_round_trips_the_documented_contract() -> None:
                 "top_factors": ["f1", "f2"],
                 "recommendation": "rec",
                 "model_name": "real-v1",
+                "as_of_utc": "2026-06-20T00:00:00",
+                "demo_clock": {
+                    "requested_as_of_utc": "2034-01-01T00:00:00+00:00",
+                    "anchor_utc": "2026-06-20T00:00:00",
+                },
             },
         )
 
@@ -67,6 +72,14 @@ async def test_predict_round_trips_the_documented_contract() -> None:
     assert result.probability == 0.42
     assert result.model_name == "real-v1"
     assert result.top_factors == ["f1", "f2"]
+    assert result.effective_as_of == datetime(
+        2026, 6, 20, tzinfo=timezone.utc
+    )
+    assert result.demo_clock is not None
+    assert result.demo_clock.requested_as_of_utc == _input().as_of
+    assert result.demo_clock.anchor_utc == datetime(
+        2026, 6, 20, tzinfo=timezone.utc
+    )
     assert captured["json"]["risk_type"] == "fire"
     assert captured["json"]["recent_alarm_count"] == 2
     assert captured["json"]["as_of"] == "2034-01-01T00:00:00+00:00"

@@ -114,7 +114,7 @@ async def test_granularity_bucketing_averages_correctly() -> None:
 @pytest.mark.asyncio
 async def test_gap_over_one_hour_appears_in_missing_intervals() -> None:
     await _seed_all()
-    sensor_id, channel_id = await _seed_numeric_test_channel("3", "fac_5339")
+    sensor_id, channel_id = await _seed_numeric_test_channel("3", "fac_5122")
     base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
     await _add_readings(channel_id, [(base, 20.0), (base + timedelta(hours=2), 21.0)])
 

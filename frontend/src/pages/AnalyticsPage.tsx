@@ -20,7 +20,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { KpiCard, SegmentedControl, StatusBadge } from "../shared/ui";
+import { InlineAlert, KpiCard, SegmentedControl, StatusBadge } from "../shared/ui";
 import {
   useDashboardMetrics,
   useFacilities,
@@ -30,6 +30,7 @@ import {
 import { formatDateTime, formatPercent } from "../app/labels";
 import { PageError, PageLoading } from "../components/StateViews";
 import { hasActiveEngineerAssignment, isRiskActiveAt } from "../domain";
+import { useContour } from "../app/ContourProvider";
 
 type AnalyticsTab = "management" | "technical" | "finance";
 
@@ -44,6 +45,7 @@ const trendData = [
 ];
 
 export function AnalyticsPage() {
+  const { runtime } = useContour();
   const [tab, setTab] = useState<AnalyticsTab>("management");
   const metricsQuery = useDashboardMetrics();
   const facilitiesQuery = useFacilities();
@@ -76,15 +78,16 @@ export function AnalyticsPage() {
   const facilities = facilitiesQuery.data;
   const risks = risksQuery.data;
   const orders = ordersQuery.data;
+  const historicalDemoRisk = risks.find((risk) => risk.demoClock && risk.modelAsOf);
   const scenarioNow = metricsQuery.data[0]?.updatedAt ?? "";
-  const facilitiesWithTelemetry = facilities.filter((facility) => facility.sensorAvailability !== null);
-  const averageTelemetryAvailability = facilitiesWithTelemetry.length
-    ? facilitiesWithTelemetry.reduce((sum, facility) => sum + facility.sensorAvailability!, 0)
-      / facilitiesWithTelemetry.length
+  const facilitiesWithReadingCoverage = facilities.filter((facility) => facility.sensorAvailability !== null);
+  const averageReadingCoverage = facilitiesWithReadingCoverage.length
+    ? facilitiesWithReadingCoverage.reduce((sum, facility) => sum + facility.sensorAvailability!, 0)
+      / facilitiesWithReadingCoverage.length
     : null;
   const facilityComparison = facilities.slice(0, 7).map((facility) => ({
     name: facility.name.replace("Объект ", "№"),
-    readiness: facility.sensorAvailability === null
+    coverage: facility.sensorAvailability === null
       ? null
       : Math.round(facility.sensorAvailability * 100),
     orders: orders.filter(
@@ -103,8 +106,15 @@ export function AnalyticsPage() {
             Управленческие, технические и финансовые показатели всей городской сети
           </p>
         </div>
-        <StatusBadge tone="forecast">Синтетический демо-сценарий</StatusBadge>
+        <StatusBadge tone="forecast">{runtime.mode === "api" ? "Backend API" : "Синтетический демо-сценарий"}</StatusBadge>
       </header>
+
+      {historicalDemoRisk ? (
+        <InlineAlert tone="warning" title="Исторический ML-демо">
+          Технические прогнозы относятся к модельному срезу {formatDateTime(historicalDemoRisk.modelAsOf)}.
+          Управленческие показатели заявок и SLA считаются в текущем операционном времени
+        </InlineAlert>
+      ) : null}
 
       <SegmentedControl
         label="Раздел аналитики"
@@ -139,7 +149,7 @@ export function AnalyticsPage() {
               value={metrics.get("closed_work_orders_24h")?.value ?? 0}
               icon={CheckCircle}
               tone="success"
-              detail="по времени демо-сценария"
+              detail={runtime.mode === "api" ? "по данным backend" : "по времени демо-сценария"}
             />
           </div>
 
@@ -148,10 +158,12 @@ export function AnalyticsPage() {
               <header className="surface__header">
                 <div>
                   <h2>Динамика событий и работ</h2>
-                  <p className="page-header__meta">Статичный демонстрационный ряд за 15-21 сентября</p>
+                  <p className="page-header__meta">
+                    {runtime.mode === "api" ? "Историческая агрегация пока не опубликована API" : "Статичный демонстрационный ряд за 15-21 сентября"}
+                  </p>
                 </div>
               </header>
-              <div className="surface__body chart-frame" aria-hidden="true">
+              {runtime.mode === "mock" ? <><div className="surface__body chart-frame" aria-hidden="true">
                 <ResponsiveContainer width="100%" height={300}>
                   <AreaChart data={trendData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
                     <defs>
@@ -177,7 +189,9 @@ export function AnalyticsPage() {
                   <summary>Показать данные графика</summary>
                   <div className="table-scroll"><table><thead><tr><th>День</th><th>Высокие риски</th><th>Закрыто заявок</th><th>Инциденты</th></tr></thead><tbody>{trendData.map((row) => <tr key={row.day}><td>{row.day}</td><td>{row.risks}</td><td>{row.closed}</td><td>{row.incidents}</td></tr>)}</tbody></table></div>
                 </details>
-              </div>
+              </div></> : <div className="surface__body">
+                <p className="muted">Текущие KPI выше рассчитаны по API. Временной ряд не подменяется демонстрационными точками</p>
+              </div>}
             </section>
 
             <section className="surface">
@@ -210,13 +224,13 @@ export function AnalyticsPage() {
         <div className="content-stack" style={{ marginTop: 16 }}>
           <div className="kpi-grid">
             <KpiCard
-              label="Доступность телеметрии"
-              value={averageTelemetryAvailability === null
+              label="Датчики с сохранённым показанием"
+              value={averageReadingCoverage === null
                 ? "Нет данных"
-                : formatPercent(averageTelemetryAvailability)}
+                : formatPercent(averageReadingCoverage)}
               icon={Gauge}
-              tone={averageTelemetryAvailability === null ? "neutral" : "success"}
-              detail="по объектам с данными"
+              tone={averageReadingCoverage === null ? "neutral" : "info"}
+              detail="средняя доля по объектам, не свежесть потока"
             />
             <KpiCard
               label="Активные прогнозы"
@@ -225,7 +239,7 @@ export function AnalyticsPage() {
               ).length}
               icon={Pulse}
               tone="forecast"
-              detail="демонстрационные прогнозы"
+              detail={runtime.mode === "api" ? "прогнозы backend" : "демонстрационные прогнозы"}
             />
             <KpiCard
               label="Объекты без данных"
@@ -239,8 +253,8 @@ export function AnalyticsPage() {
             <section className="surface">
               <header className="surface__header">
                 <div>
-                  <h2>Доступность телеметрии</h2>
-                  <p className="page-header__meta">Отдельная процентная шкала 0-100%</p>
+                  <h2>Покрытие последними показаниями</h2>
+                  <p className="page-header__meta">Доля датчиков с любым сохранённым показанием. Не отражает свежесть или текущую связь</p>
                 </div>
               </header>
               <div className="surface__body chart-frame" aria-hidden="true">
@@ -249,8 +263,8 @@ export function AnalyticsPage() {
                     <CartesianGrid stroke="#e7ecf3" strokeDasharray="4 4" vertical={false} />
                     <XAxis dataKey="name" tick={{ fill: "#66758f", fontSize: 11 }} axisLine={false} tickLine={false} />
                     <YAxis domain={[0, 100]} tickFormatter={(value: number) => `${value}%`} tick={{ fill: "#66758f", fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <Tooltip formatter={(value) => [`${String(value)}%`, "Доступность"]} contentStyle={{ borderRadius: 8, borderColor: "#d8e1ed" }} />
-                    <Bar dataKey="readiness" name="Доступность" fill="#2467e8" radius={[4, 4, 0, 0]} />
+                    <Tooltip formatter={(value) => [`${String(value)}%`, "Покрытие"]} contentStyle={{ borderRadius: 8, borderColor: "#d8e1ed" }} />
+                    <Bar dataKey="coverage" name="Покрытие" fill="#2467e8" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -285,7 +299,7 @@ export function AnalyticsPage() {
               </div>
             </header>
             <div className="surface__body chart-data-companion">
-              <div className="table-scroll"><table><thead><tr><th>Объект</th><th>Доступность, %</th><th>Открытые заявки</th></tr></thead><tbody>{facilityComparison.map((row) => <tr key={row.name}><td>{row.name}</td><td>{row.readiness ?? "Нет данных"}</td><td>{row.orders}</td></tr>)}</tbody></table></div>
+              <div className="table-scroll"><table><thead><tr><th>Объект</th><th>С показанием, %</th><th>Открытые заявки</th></tr></thead><tbody>{facilityComparison.map((row) => <tr key={row.name}><td>{row.name}</td><td>{row.coverage ?? "Нет данных"}</td><td>{row.orders}</td></tr>)}</tbody></table></div>
             </div>
           </section>
         </div>
@@ -331,7 +345,7 @@ export function AnalyticsPage() {
       ) : null}
 
       <p className="provenance-note" style={{ marginTop: 16 }}>
-        Показатели обновлены {formatDateTime(metricsQuery.data[0]?.updatedAt)}. Все значения в прототипе синтетические
+        Показатели обновлены {formatDateTime(metricsQuery.data[0]?.updatedAt)}. Источник: {runtime.mode === "api" ? "расчёт по данным backend" : "синтетический сценарий Contour"}
       </p>
     </div>
   );

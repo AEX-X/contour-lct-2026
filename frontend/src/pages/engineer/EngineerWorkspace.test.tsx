@@ -7,6 +7,7 @@ import { MemoryOfflineStorage, OfflineEngineerService } from '../../offline'
 import {
   createMemoryStorage,
   createMockContourRepository,
+  RepositoryError,
   type WorkOrder,
   type WorkOrderActionCommand,
 } from '../../repositories'
@@ -215,6 +216,39 @@ describe('EngineerWorkspace', () => {
     expect(onInvalidate).toHaveBeenCalled()
   })
 
+  it('reuses the full idempotency metadata when an engineer retries the same action', async () => {
+    const user = userEvent.setup()
+    const scenario = await createAssignedScenario()
+    const originalSnapshot = scenario.repository.getSnapshot.bind(scenario.repository)
+    let clockTick = 0
+    vi.spyOn(scenario.repository, 'getSnapshot').mockImplementation(() => ({
+      ...originalSnapshot(),
+      demoClockIso: new Date(Date.parse(CLIENT_OCCURRED_AT) + clockTick++ * 1_000).toISOString(),
+    }))
+    const originalAction = scenario.repository.performWorkOrderAction.bind(scenario.repository)
+    const attempts: WorkOrderActionCommand[] = []
+    vi.spyOn(scenario.repository, 'performWorkOrderAction').mockImplementation(async (workOrderId, nextCommand) => {
+      if (nextCommand.action === 'accept') {
+        attempts.push(nextCommand)
+        if (attempts.length === 1) {
+          throw new RepositoryError('SOURCE_UNAVAILABLE', 'Ответ потерян после отправки')
+        }
+      }
+      return originalAction(workOrderId, nextCommand)
+    })
+
+    renderWorkspace(scenario)
+    const accept = await screen.findByRole('button', { name: 'Принять назначение' })
+    await user.click(accept)
+    expect(await screen.findByText('Ответ потерян после отправки')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Принять назначение' }))
+    expect(await screen.findByRole('button', { name: 'Выехать на объект' })).toBeInTheDocument()
+
+    expect(attempts).toHaveLength(2)
+    expect(attempts[1]?.idempotencyKey).toBe(attempts[0]?.idempotencyKey)
+    expect(attempts[1]?.clientOccurredAt).toBe(attempts[0]?.clientOccurredAt)
+  })
+
   it('keeps a four-step result offline and synchronizes it after connectivity returns', async () => {
     const user = userEvent.setup()
     const scenario = await createAssignedScenario()
@@ -233,7 +267,7 @@ describe('EngineerWorkspace', () => {
     await user.click(
       screen.getByRole('switch', { name: 'Перейти в режим без сети' }),
     )
-    expect(screen.getByText('Демо: без сети')).toBeInTheDocument()
+    expect(screen.getByText('Офлайн-режим')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Оформить результат' }))
     const wizard = screen.getByRole('heading', { name: 'Отчёт о выполнении' }).closest('section')

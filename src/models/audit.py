@@ -22,8 +22,10 @@ class AuditLogEntry(Base):
     user_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     username: Mapped[str | None] = mapped_column(String, nullable=True)
     action: Mapped[str] = mapped_column(String, index=True)
-    target_type: Mapped[str | None] = mapped_column(String, nullable=True)
-    target_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    target_type: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )
+    target_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     result: Mapped[str] = mapped_column(String)  # "success" | "denied" | "failure"
     status_code: Mapped[int] = mapped_column(Integer)
     ip: Mapped[str | None] = mapped_column(String, nullable=True)

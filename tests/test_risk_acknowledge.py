@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from src.db import async_session_factory
 from src.main import app
-from src.models.auth import User, UserPermission, UserScope, UserScopeFacility
+from src.models.auth import User, UserPermission, UserScope
 from src.models.risk import Risk, RiskDecision
 from src.services.auth_service import hash_password
 from src.services.demo_seed import seed_demo_users

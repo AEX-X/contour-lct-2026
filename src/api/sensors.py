@@ -1,10 +1,11 @@
 """GET /api/v1/sensors -- scope-filtered, cursor-paginated sensor list."""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 
 from src.db import async_session_factory
-from src.deps.auth import get_current_user
+from src.deps.auth import require_permission
 from src.models.auth import User
 from src.schemas.sensor import SensorDetailOut, SensorListEnvelope, SensorListMeta
 from src.services.scope import resolve_scope
@@ -23,7 +24,7 @@ async def get_sensors(
     query: str | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission("sensor.read")),
 ) -> SensorListEnvelope:
     """List sensors within the caller's scope.
 
@@ -46,7 +47,9 @@ async def get_sensors(
 
     async with async_session_factory() as session:
         scope = await resolve_scope(session, user.id)
-        allowed_ids = None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        allowed_ids = (
+            None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        )
 
         items, next_cursor, total = await list_sensors(
             session,
@@ -61,12 +64,18 @@ async def get_sensors(
 
     return SensorListEnvelope(
         data=items,
-        meta=SensorListMeta(next_cursor=next_cursor, total=total, generated_at=datetime.now(timezone.utc)),
+        meta=SensorListMeta(
+            next_cursor=next_cursor,
+            total=total,
+            generated_at=datetime.now(timezone.utc),
+        ),
     )
 
 
 @router.get("/sensors/{sensor_id}", response_model=SensorDetailOut)
-async def get_sensor(sensor_id: str, user: User = Depends(get_current_user)) -> SensorDetailOut:
+async def get_sensor(
+    sensor_id: str, user: User = Depends(require_permission("sensor.read"))
+) -> SensorDetailOut:
     """Fetch one sensor's detail card, enforcing the caller's scope.
 
     Args:
@@ -82,5 +91,7 @@ async def get_sensor(sensor_id: str, user: User = Depends(get_current_user)) -> 
     """
     async with async_session_factory() as session:
         scope = await resolve_scope(session, user.id)
-        allowed_ids = None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        allowed_ids = (
+            None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        )
         return await get_sensor_detail(session, sensor_id, allowed_ids)

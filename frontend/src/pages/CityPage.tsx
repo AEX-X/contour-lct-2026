@@ -1,6 +1,8 @@
 import {
   ArrowRight,
   Buildings,
+  CaretLeft,
+  CaretRight,
   ClockCountdown,
   ListBullets,
   MapTrifold,
@@ -18,7 +20,9 @@ import {
   type RiskForecast,
 } from "../domain";
 import {
+  Button,
   KpiCard,
+  InlineAlert,
   SegmentedControl,
   StatusBadge,
   IconButton,
@@ -39,6 +43,8 @@ import {
 } from "../app/labels";
 
 type ViewMode = "map" | "list";
+
+const FACILITY_LIST_PAGE_SIZE = 20;
 
 interface CityPageProps {
   initialView?: ViewMode;
@@ -111,6 +117,12 @@ export function CityPage({ initialView = "map" }: CityPageProps) {
     return operationalState === status;
   });
   const selected = facilities.find((item) => item.id === selectedId) ?? null;
+  const requestedPage = Number.parseInt(searchParams.get("page") ?? "1", 10);
+  const listPageCount = Math.max(1, Math.ceil(facilities.length / FACILITY_LIST_PAGE_SIZE));
+  const listPage = Math.min(
+    Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1,
+    listPageCount,
+  );
 
   const allAttentionItems = (() => {
     const severityWeight = { low: 1, medium: 2, high: 3, critical: 4 } as const;
@@ -176,6 +188,9 @@ export function CityPage({ initialView = "map" }: CityPageProps) {
         next.delete("incident");
         next.delete("risk");
       }
+      if (["q", "status", "incident", "risk"].some((key) => key in patch)) {
+        next.delete("page");
+      }
       return next;
     });
   }
@@ -210,6 +225,7 @@ export function CityPage({ initialView = "map" }: CityPageProps) {
   }
 
   const metricByCode = new Map(metricsQuery.data.map((metric) => [metric.code, metric]));
+  const historicalDemoRisk = risks.find((risk) => risk.demoClock && risk.modelAsOf);
   const kpis = [
     {
       code: "critical_incidents_now",
@@ -237,6 +253,13 @@ export function CityPage({ initialView = "map" }: CityPageProps) {
   return (
     <div className="page page--flush city-page">
       <h1 className="sr-only">Оперативная картина Москвы</h1>
+
+      {historicalDemoRisk ? (
+        <InlineAlert tone="warning" title="Исторический ML-демо">
+          Прогнозы рассчитаны на модельный срез {formatDateTime(historicalDemoRisk.modelAsOf)}.
+          Операционные заявки и SLA продолжают учитывать текущее время
+        </InlineAlert>
+      ) : null}
 
       <section className="kpi-grid" aria-label="Ключевые показатели">
         {kpis.map((item) => {
@@ -317,6 +340,9 @@ export function CityPage({ initialView = "map" }: CityPageProps) {
               facilities={facilities}
               operationalByFacility={operationalByFacility}
               selectedId={selectedId}
+              page={listPage}
+              pageSize={FACILITY_LIST_PAGE_SIZE}
+              onPageChange={(page) => updateParams({ page: page > 1 ? String(page) : null })}
               onSelect={(facilityId) => updateParams({ facility: facilityId })}
             />
           )}
@@ -395,63 +421,103 @@ export function CityPage({ initialView = "map" }: CityPageProps) {
   );
 }
 
-function FacilityTable({
+export function FacilityTable({
   facilities,
   operationalByFacility,
   selectedId,
+  page,
+  pageSize,
+  onPageChange,
   onSelect,
 }: {
   facilities: Facility[];
   operationalByFacility: Map<string, { state: FacilityOperationalState; reason: string }>;
   selectedId: string | null;
+  page: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
   onSelect: (facilityId: string) => void;
 }) {
+  const pageCount = Math.max(1, Math.ceil(facilities.length / pageSize));
+  const safePage = Math.min(Math.max(page, 1), pageCount);
+  const rangeStart = (safePage - 1) * pageSize;
+  const visibleFacilities = facilities.slice(rangeStart, rangeStart + pageSize);
+
   return (
-    <div className="data-table-wrap" style={{ margin: 16 }}>
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Объект</th>
-            <th>Статус</th>
-            <th>Доступность датчиков</th>
-            <th>Обновлено</th>
-            <th aria-label="Действия" />
-          </tr>
-        </thead>
-        <tbody>
-          {facilities.map((facility) => {
-            const operationalState = operationalByFacility.get(facility.id)?.state ?? facility.status;
-            return (
-              <tr key={facility.id} aria-selected={selectedId === facility.id}>
-                <td>
-                  <button className="text-action" type="button" onClick={() => onSelect(facility.id)}>
-                    <strong>{facility.name}</strong>
-                    <small>{facility.address}</small>
-                  </button>
-                </td>
-                <td>
-                  <StatusBadge tone={facilityTone(operationalState)}>
-                    {operationalStateLabels[operationalState]}
-                  </StatusBadge>
-                </td>
-                <td className="numeric">
-                  {facility.sensorAvailability === null
-                    ? "Нет данных"
-                    : formatPercent(facility.sensorAvailability)}
-                </td>
-                <td>{formatDateTime(facility.updatedAt)}</td>
-                <td>
-                  <IconButton
-                    label={`Открыть ${facility.name}`}
-                    icon={<ArrowRight size={18} />}
-                    onClick={() => onSelect(facility.id)}
-                  />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="facility-table-panel">
+      <div className="data-table-wrap facility-table-scroll">
+        <table className="data-table">
+          <caption className="data-table__caption">
+            Покрытие показывает долю датчиков с любым сохранённым показанием, а не свежесть данных или текущую связь
+          </caption>
+          <thead>
+            <tr>
+              <th>Объект</th>
+              <th>Статус</th>
+              <th>Датчики с показанием</th>
+              <th>Обновлено</th>
+              <th aria-label="Действия" />
+            </tr>
+          </thead>
+          <tbody>
+            {visibleFacilities.map((facility) => {
+              const operationalState = operationalByFacility.get(facility.id)?.state ?? facility.status;
+              return (
+                <tr key={facility.id} aria-selected={selectedId === facility.id}>
+                  <td>
+                    <button className="text-action" type="button" onClick={() => onSelect(facility.id)}>
+                      <strong>{facility.name}</strong>
+                      <small>{facility.address}</small>
+                    </button>
+                  </td>
+                  <td>
+                    <StatusBadge tone={facilityTone(operationalState)}>
+                      {operationalStateLabels[operationalState]}
+                    </StatusBadge>
+                  </td>
+                  <td className="numeric">
+                    {facility.sensorAvailability === null
+                      ? "Нет данных"
+                      : formatPercent(facility.sensorAvailability)}
+                  </td>
+                  <td>{formatDateTime(facility.updatedAt)}</td>
+                  <td>
+                    <IconButton
+                      label={`Открыть ${facility.name}`}
+                      icon={<ArrowRight size={18} />}
+                      onClick={() => onSelect(facility.id)}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <nav className="table-pagination" aria-label="Страницы списка объектов">
+        <p aria-live="polite">
+          {rangeStart + 1}-{rangeStart + visibleFacilities.length} из {facilities.length}
+          <span>Страница {safePage} из {pageCount}</span>
+        </p>
+        <div>
+          <Button
+            variant="secondary"
+            startIcon={<CaretLeft size={18} />}
+            disabled={safePage === 1}
+            onClick={() => onPageChange(safePage - 1)}
+          >
+            Назад
+          </Button>
+          <Button
+            variant="secondary"
+            endIcon={<CaretRight size={18} />}
+            disabled={safePage === pageCount}
+            onClick={() => onPageChange(safePage + 1)}
+          >
+            Далее
+          </Button>
+        </div>
+      </nav>
     </div>
   );
 }
@@ -495,7 +561,7 @@ function FacilityPreview({
         <dl className="definition-grid">
           <dt>Текущая ситуация</dt>
           <dd>{operationalState.reason}</dd>
-          <dt>Датчики на связи</dt>
+          <dt>Датчики с сохранённым показанием</dt>
           <dd>
             {facility.sensorAvailability === null
               ? "Нет данных"
@@ -510,7 +576,10 @@ function FacilityPreview({
           <dt>Последнее обновление</dt>
           <dd>{formatDateTime(facility.updatedAt)}</dd>
         </dl>
-        <p className="provenance-note">Все сведения на экране синтетические и предназначены для демо</p>
+        <p className="provenance-note">
+          Источник: {facility.provenance.sourceLabel}
+          {facility.provenance.note ? ` · ${facility.provenance.note}` : ""}
+        </p>
       </div>
       <div className="facility-preview__footer">
         <Link className="ui-button ui-button--primary ui-button--medium ui-button--full-width" to={`/facilities/${facility.id}`}>

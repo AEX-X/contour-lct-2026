@@ -1,4 +1,5 @@
 """GET /api/v1/risks[...] -- scope-filtered risk queue and detail card."""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
@@ -7,7 +8,14 @@ from src.db import async_session_factory
 from src.deps.auth import require_permission
 from src.errors import ApiError
 from src.models.auth import User
-from src.schemas.risk import AcknowledgeRequest, DeferRequest, RejectRequest, RiskListEnvelope, RiskListMeta, RiskOut
+from src.schemas.risk import (
+    AcknowledgeRequest,
+    DeferRequest,
+    RejectRequest,
+    RiskListEnvelope,
+    RiskListMeta,
+    RiskOut,
+)
 from src.services.reference_data import REJECT_REASONS
 from src.services.risk_decision import apply_decision
 from src.services.risk_query import get_risk_detail, list_risks, to_risk_out
@@ -22,7 +30,9 @@ def _parse_iso_datetime(raw: str, field_name: str) -> datetime:
     try:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise ApiError(400, "VALIDATION_ERROR", f"{field_name} must be an ISO 8601 datetime") from exc
+        raise ApiError(
+            400, "VALIDATION_ERROR", f"{field_name} must be an ISO 8601 datetime"
+        ) from exc
 
 
 @router.get("/risks", response_model=RiskListEnvelope)
@@ -31,6 +41,7 @@ async def get_risks(
     risk_type: str | None = Query(default=None),
     risk_level: str | None = Query(default=None),
     decision_status: str | None = Query(default=None),
+    include_invalidated: bool = Query(default=False),
     from_: str | None = Query(default=None, alias="from"),
     to: str | None = Query(default=None),
     cursor: str | None = Query(default=None),
@@ -44,6 +55,8 @@ async def get_risks(
         risk_type: Optional exact RISK_TYPES filter.
         risk_level: Optional exact RISK_LEVELS filter.
         decision_status: Optional exact decision_status filter.
+        include_invalidated: Include archived predictions with unverifiable
+            historical model-clock provenance.
         from_: Optional ISO 8601 inclusive lower bound on as_of.
         to: Optional ISO 8601 inclusive upper bound on as_of.
         cursor: Opaque pagination cursor.
@@ -58,7 +71,9 @@ async def get_risks(
 
     async with async_session_factory() as session:
         scope = await resolve_scope(session, user.id)
-        allowed_ids = None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        allowed_ids = (
+            None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        )
 
         items, next_cursor, total = await list_risks(
             session,
@@ -67,6 +82,7 @@ async def get_risks(
             risk_type=risk_type,
             risk_level=risk_level,
             decision_status=decision_status,
+            include_invalidated=include_invalidated,
             as_of_from=as_of_from,
             as_of_to=as_of_to,
             cursor=cursor,
@@ -75,12 +91,18 @@ async def get_risks(
 
     return RiskListEnvelope(
         data=[to_risk_out(item) for item in items],
-        meta=RiskListMeta(next_cursor=next_cursor, total=total, generated_at=datetime.now(timezone.utc)),
+        meta=RiskListMeta(
+            next_cursor=next_cursor,
+            total=total,
+            generated_at=datetime.now(timezone.utc),
+        ),
     )
 
 
 @router.get("/risks/{risk_id}", response_model=RiskOut)
-async def get_risk(risk_id: str, user: User = Depends(require_permission("risk.read"))) -> RiskOut:
+async def get_risk(
+    risk_id: str, user: User = Depends(require_permission("risk.read"))
+) -> RiskOut:
     """Fetch one risk's full forecast card, enforcing the caller's scope.
 
     Args:
@@ -96,14 +118,18 @@ async def get_risk(risk_id: str, user: User = Depends(require_permission("risk.r
     """
     async with async_session_factory() as session:
         scope = await resolve_scope(session, user.id)
-        allowed_ids = None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        allowed_ids = (
+            None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        )
         risk = await get_risk_detail(session, risk_id, allowed_ids)
         return to_risk_out(risk)
 
 
 @router.post("/risks/{risk_id}/acknowledge", response_model=RiskOut)
 async def acknowledge_risk(
-    risk_id: str, body: AcknowledgeRequest, user: User = Depends(require_permission("risk.acknowledge"))
+    risk_id: str,
+    body: AcknowledgeRequest,
+    user: User = Depends(require_permission("risk.acknowledge")),
 ) -> RiskOut:
     """Acknowledge a risk forecast, with optimistic concurrency.
 
@@ -121,15 +147,21 @@ async def acknowledge_risk(
     """
     async with async_session_factory() as session:
         scope = await resolve_scope(session, user.id)
-        allowed_ids = None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        allowed_ids = (
+            None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        )
         risk = await get_risk_detail(session, risk_id, allowed_ids)
-        updated = await apply_decision(session, risk, user, "acknowledged", body.expected_version)
+        updated = await apply_decision(
+            session, risk, user, "acknowledged", body.expected_version
+        )
         return to_risk_out(updated)
 
 
 @router.post("/risks/{risk_id}/reject", response_model=RiskOut)
 async def reject_risk(
-    risk_id: str, body: RejectRequest, user: User = Depends(require_permission("risk.resolve"))
+    risk_id: str,
+    body: RejectRequest,
+    user: User = Depends(require_permission("risk.resolve")),
 ) -> RiskOut:
     """Reject a risk forecast; requires a reason_code, and a comment for "other".
 
@@ -148,26 +180,48 @@ async def reject_risk(
             if expected_version is stale.
     """
     if body.reason_code is None:
-        raise ApiError(422, "DOMAIN_VALIDATION_ERROR", "reason_code обязателен при отклонении прогноза")
+        raise ApiError(
+            422,
+            "DOMAIN_VALIDATION_ERROR",
+            "reason_code обязателен при отклонении прогноза",
+        )
     reason = _REJECT_REASONS_BY_ID.get(body.reason_code)
     if reason is None:
-        raise ApiError(422, "DOMAIN_VALIDATION_ERROR", f"Неизвестный reason_code: {body.reason_code}")
+        raise ApiError(
+            422,
+            "DOMAIN_VALIDATION_ERROR",
+            f"Неизвестный reason_code: {body.reason_code}",
+        )
     if reason.requires_comment and not (body.comment and body.comment.strip()):
-        raise ApiError(422, "DOMAIN_VALIDATION_ERROR", f"Комментарий обязателен для причины '{body.reason_code}'")
+        raise ApiError(
+            422,
+            "DOMAIN_VALIDATION_ERROR",
+            f"Комментарий обязателен для причины '{body.reason_code}'",
+        )
 
     async with async_session_factory() as session:
         scope = await resolve_scope(session, user.id)
-        allowed_ids = None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        allowed_ids = (
+            None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        )
         risk = await get_risk_detail(session, risk_id, allowed_ids)
         updated = await apply_decision(
-            session, risk, user, "rejected", body.expected_version, reason_code=body.reason_code, comment=body.comment
+            session,
+            risk,
+            user,
+            "rejected",
+            body.expected_version,
+            reason_code=body.reason_code,
+            comment=body.comment,
         )
         return to_risk_out(updated)
 
 
 @router.post("/risks/{risk_id}/defer", response_model=RiskOut)
 async def defer_risk(
-    risk_id: str, body: DeferRequest, user: User = Depends(require_permission("risk.resolve"))
+    risk_id: str,
+    body: DeferRequest,
+    user: User = Depends(require_permission("risk.resolve")),
 ) -> RiskOut:
     """Defer a risk forecast, with optimistic concurrency.
 
@@ -184,7 +238,11 @@ async def defer_risk(
     """
     async with async_session_factory() as session:
         scope = await resolve_scope(session, user.id)
-        allowed_ids = None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        allowed_ids = (
+            None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        )
         risk = await get_risk_detail(session, risk_id, allowed_ids)
-        updated = await apply_decision(session, risk, user, "deferred", body.expected_version)
+        updated = await apply_decision(
+            session, risk, user, "deferred", body.expected_version
+        )
         return to_risk_out(updated)

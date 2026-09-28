@@ -1,10 +1,11 @@
 """GET /api/v1/sensors/{sensor_id}/series."""
+
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 
 from src.db import async_session_factory
-from src.deps.auth import get_current_user
+from src.deps.auth import require_permission
 from src.models.auth import User
 from src.schemas.sensor_series import CategoricalSeriesOut, NumericSeriesOut
 from src.services.scope import resolve_scope
@@ -13,13 +14,16 @@ from src.services.sensor_series_query import get_sensor_series
 router = APIRouter(prefix="/api/v1", tags=["sensor-series"])
 
 
-@router.get("/sensors/{sensor_id}/series", response_model=NumericSeriesOut | CategoricalSeriesOut)
+@router.get(
+    "/sensors/{sensor_id}/series",
+    response_model=NumericSeriesOut | CategoricalSeriesOut,
+)
 async def get_series(
     sensor_id: str,
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = Query(default=None),
     granularity: str | None = Query(default=None),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission("sensor.read")),
 ) -> NumericSeriesOut | CategoricalSeriesOut:
     """Return a sensor's time series, in the format matching its value_type.
 
@@ -40,5 +44,9 @@ async def get_series(
     """
     async with async_session_factory() as session:
         scope = await resolve_scope(session, user.id)
-        allowed_ids = None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
-        return await get_sensor_series(session, sensor_id, allowed_ids, from_, to, granularity)
+        allowed_ids = (
+            None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        )
+        return await get_sensor_series(
+            session, sensor_id, allowed_ids, from_, to, granularity
+        )

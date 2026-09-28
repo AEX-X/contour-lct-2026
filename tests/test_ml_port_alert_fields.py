@@ -1,6 +1,6 @@
 """Optional model-alert fields (alert, model_threshold, horizon_hours) in the ML Prediction Port."""
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -13,7 +13,7 @@ from src.models.hierarchy import Facility
 from src.models.risk import Risk
 from src.models.sensor import SensorChannel, SensorReading
 from src.services.demo_seed import seed_demo_users
-from src.services.ml_port import PredictionInput, PredictionResult
+from src.services.ml_port import DemoClock, PredictionInput, PredictionResult
 from src.services.ml_predictor_http import HttpMLPredictor, MLPredictorError
 from src.services.risk_sync import sync_risks
 
@@ -44,6 +44,7 @@ async def _predict_with(body: dict) -> PredictionResult:
 async def test_response_without_new_fields_parses_as_before() -> None:
     result = await _predict_with(_BASE)
     assert (result.alert, result.model_threshold, result.horizon_hours) == (None, None, None)
+    assert (result.effective_as_of, result.demo_clock) == (None, None)
     assert result.probability == 0.2
 
 
@@ -70,6 +71,13 @@ async def test_null_means_absent() -> None:
         {"horizon_hours": 0},
         {"horizon_hours": -24},
         {"horizon_hours": "72"},
+        {"as_of_utc": "not-a-date"},
+        {"demo_clock": "historical"},
+        {
+            "demo_clock": {
+                "requested_as_of_utc": "2040-01-01T00:00:00Z",
+            }
+        },
     ],
 )
 async def test_wrong_types_raise_ml_predictor_error(extra: dict) -> None:
@@ -124,15 +132,38 @@ async def _risk_card(sensor_id: str) -> dict:
 @pytest.mark.asyncio
 async def test_model_fields_reach_the_risk_card() -> None:
     sensor_id = await _seed_channel("with_fields")
+    model_as_of = datetime(2026, 6, 20, tzinfo=timezone.utc)
+    operational_now = datetime(2040, 1, 1, 1, tzinfo=timezone.utc)
     predictor = _FixedPredictor(
-        PredictionResult(**{**_BASE, "top_factors": ["f"]}, alert=True, model_threshold=0.147, horizon_hours=24.0)
+        PredictionResult(
+            **{**_BASE, "top_factors": ["f"]},
+            alert=True,
+            model_threshold=0.147,
+            horizon_hours=24.0,
+            effective_as_of=model_as_of,
+            demo_clock=DemoClock(
+                requested_as_of_utc=operational_now,
+                anchor_utc=model_as_of,
+            ),
+        )
     )
     async with async_session_factory() as session:
-        await sync_risks(session, predictor, now=datetime(2040, 1, 1, 1, tzinfo=timezone.utc))
+        await sync_risks(session, predictor, now=operational_now)
 
     card = await _risk_card(sensor_id)
     assert card["alert"] is True
     assert card["model_threshold"] == 0.147
+    assert card["as_of"] == model_as_of.isoformat().replace("+00:00", "Z")
+    assert card["prediction_window"]["start"] == model_as_of.isoformat().replace(
+        "+00:00", "Z"
+    )
+    assert card["demo_clock"] == {
+        "requested_as_of_utc": operational_now.isoformat().replace("+00:00", "Z"),
+        "anchor_utc": model_as_of.isoformat().replace("+00:00", "Z"),
+    }
+    assert card["sla_due_at"] == (
+        operational_now + timedelta(hours=8)
+    ).isoformat().replace("+00:00", "Z")
 
 
 @pytest.mark.asyncio

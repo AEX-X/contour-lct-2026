@@ -5,6 +5,7 @@ import { apiErrorEnvelopeSchema, loginResponseSchema } from './schemas'
 
 const TOKEN_STORAGE_KEY = 'contour.api.session-token.v1'
 const REQUEST_TIMEOUT_MS = 15_000
+export const CONTOUR_AUTH_REQUIRED_EVENT = 'contour:auth-required'
 
 export type FetchLike = typeof fetch
 
@@ -30,13 +31,58 @@ function makeUrl(baseUrl: string, path: string, query?: Record<string, string | 
   return `${baseUrl}${normalizedPath}${suffix}`
 }
 
-function mapStatusCode(status: number) {
+function mapStatusCode(status: number, backendCode?: string) {
+  const knownCodes = {
+    VERSION_CONFLICT: 'VERSION_CONFLICT',
+    INVALID_TRANSITION: 'INVALID_TRANSITION',
+    ASSIGNMENT_CHANGED: 'ASSIGNMENT_CHANGED',
+    ACCESS_EXPIRED: 'ACCESS_EXPIRED',
+    NO_SUITABLE_ENGINEER: 'NO_SUITABLE_ENGINEER',
+    NOT_FOUND: 'NOT_FOUND',
+    VALIDATION_ERROR: 'VALIDATION_ERROR',
+    DOMAIN_VALIDATION_ERROR: 'VALIDATION_ERROR',
+    IDEMPOTENCY_KEY_REUSED: 'VALIDATION_ERROR',
+    PERMISSION_DENIED: 'FORBIDDEN',
+    FACILITY_ACCESS_DENIED: 'FORBIDDEN',
+  } as const
+  if (backendCode && backendCode in knownCodes) {
+    return knownCodes[backendCode as keyof typeof knownCodes]
+  }
   if (status === 401) return 'AUTH_REQUIRED' as const
   if (status === 403) return 'FORBIDDEN' as const
   if (status === 404) return 'NOT_FOUND' as const
   if (status === 409) return 'VERSION_CONFLICT' as const
   if (status === 400 || status === 422) return 'VALIDATION_ERROR' as const
   return 'SOURCE_UNAVAILABLE' as const
+}
+
+function mapFieldErrors(details: Record<string, unknown> | undefined) {
+  const raw = Array.isArray(details?.errors)
+    ? details.errors
+    : Array.isArray(details?.field_errors)
+      ? details.field_errors
+      : []
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const item = entry as Record<string, unknown>
+    const rawPath = item.loc ?? item.field
+    const field = Array.isArray(rawPath)
+      ? rawPath.map(String).filter((part) => part !== 'body').join('.')
+      : typeof rawPath === 'string'
+        ? rawPath
+        : 'request'
+    const message = typeof item.msg === 'string'
+      ? item.msg
+      : typeof item.message === 'string'
+        ? item.message
+        : 'Некорректное значение'
+    const code = typeof item.type === 'string'
+      ? item.type
+      : typeof item.code === 'string'
+        ? item.code
+        : 'validation_error'
+    return [{ field, code, message }]
+  })
 }
 
 export class ContourApiClient {
@@ -79,20 +125,27 @@ export class ContourApiClient {
   }
 
   async logout() {
-    if (this.token) {
-      try {
+    try {
+      if (this.token) {
         await this.request('/auth/logout', z.void(), { method: 'POST' })
-      } finally {
-        this.clearSession()
       }
-      return
+    } catch {
+      // Local logout must remain available when the backend is unreachable.
+      // The server session is short-lived and can expire independently.
+    } finally {
+      this.clearSession()
     }
-    this.clearSession()
   }
 
   clearSession() {
     this.token = null
     this.storage.removeItem(TOKEN_STORAGE_KEY)
+  }
+
+  private notifyAuthRequired() {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(CONTOUR_AUTH_REQUIRED_EVENT))
+    }
   }
 
   async get<T>(
@@ -144,17 +197,30 @@ export class ContourApiClient {
     }
 
     if (!response.ok) {
-      if (response.status === 401) this.clearSession()
+      if (response.status === 401) {
+        this.clearSession()
+        this.notifyAuthRequired()
+      }
       const rawError = await response.json().catch(() => null)
       const parsedError = apiErrorEnvelopeSchema.safeParse(rawError)
       const message = parsedError.success
         ? parsedError.data.error.message
         : `Backend вернул ошибку ${response.status}`
-      throw new RepositoryError(mapStatusCode(response.status), message, {
+      const details = parsedError.success ? parsedError.data.error.details : undefined
+      const currentVersion = typeof details?.current_version === 'number'
+        ? details.current_version
+        : undefined
+      throw new RepositoryError(
+        mapStatusCode(response.status, parsedError.success ? parsedError.data.error.code : undefined),
+        message,
+        {
         correlationId: parsedError.success
           ? parsedError.data.error.trace_id
           : response.headers.get('x-trace-id') ?? undefined,
-      })
+          currentVersion,
+          fieldErrors: mapFieldErrors(details),
+        },
+      )
     }
 
     if (response.status === 204) return schema.parse(undefined)

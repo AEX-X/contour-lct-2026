@@ -6,7 +6,7 @@ alarms from real ETL data and other test files' fixtures -- harmless,
 since every assertion here is scoped to this file's own dedicated,
 non-catalogue channel (never a raw global count).
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select

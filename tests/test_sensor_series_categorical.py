@@ -84,7 +84,7 @@ async def _get_series(token: str, sensor_id: str, **params):
 @pytest.mark.asyncio
 async def test_consecutive_identical_values_merge_into_one_interval() -> None:
     await _seed_all()
-    sensor_id, channel_id = await _seed_categorical_test_channel("1", "fac_5339")
+    sensor_id, channel_id = await _seed_categorical_test_channel("1", "fac_5122")
     base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
     await _add_readings(
         channel_id,
@@ -109,7 +109,7 @@ async def test_consecutive_identical_values_merge_into_one_interval() -> None:
 @pytest.mark.asyncio
 async def test_value_change_starts_a_new_interval() -> None:
     await _seed_all()
-    sensor_id, channel_id = await _seed_categorical_test_channel("2", "fac_5339")
+    sensor_id, channel_id = await _seed_categorical_test_channel("2", "fac_5122")
     base = datetime(2026, 8, 1, 10, 0, 0, tzinfo=timezone.utc)
     await _add_readings(
         channel_id,

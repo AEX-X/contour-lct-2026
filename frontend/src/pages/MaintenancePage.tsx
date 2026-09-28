@@ -7,7 +7,7 @@ import {
 } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { hasActiveEngineerAssignment, type WorkOrderPriority } from "../domain";
+import { RepositoryError, hasActiveEngineerAssignment, type WorkOrderPriority } from "../domain";
 import { Button, InlineAlert, StatusBadge } from "../shared/ui";
 import { useEngineerCandidates, useWorkOrders } from "../app/dataHooks";
 import { useContour, useRepositoryCommandMeta } from "../app/ContourProvider";
@@ -20,7 +20,7 @@ import {
 import { EmptyState, PageError, PageLoading } from "../components/StateViews";
 
 export function MaintenancePage() {
-  const { repository, invalidateAll } = useContour();
+  const { repository, runtime, invalidateAll } = useContour();
   const commandMeta = useRepositoryCommandMeta();
   const [searchParams, setSearchParams] = useSearchParams();
   const ordersQuery = useWorkOrders();
@@ -74,7 +74,7 @@ export function MaintenancePage() {
         return repository.performWorkOrderAction(selected.id, {
           action,
           ...commandMeta(selected.version, JSON.stringify([selected.id, selected.version, action, priority])),
-          payload: { priority, slaPolicyId: `demo-${priority.toLowerCase()}` },
+          payload: { priority, slaPolicyId: `sla-${priority.toLowerCase()}` },
         });
       }
       if (action === "request_clarification") {
@@ -120,7 +120,9 @@ export function MaintenancePage() {
             Триаж, SLA и распределение заявок по инженерам
           </p>
         </div>
-        <StatusBadge tone="info">Городская ремонтная служба, демо</StatusBadge>
+        <StatusBadge tone="info">
+          {runtime.mode === "api" ? "Городская ремонтная служба" : "Городская ремонтная служба, демо"}
+        </StatusBadge>
       </header>
 
       <div className="metric-strip">
@@ -163,6 +165,11 @@ export function MaintenancePage() {
                   key={order.id}
                   aria-current={selected?.id === order.id ? "true" : undefined}
                   onClick={() => {
+                    actionMutation.reset();
+                    setSelectedEngineer("");
+                    setPriorityOverride(null);
+                    setClarificationReason("");
+                    setReassignReason("");
                     setSearchParams({ workOrder: order.id });
                   }}
                 >
@@ -300,7 +307,18 @@ export function MaintenancePage() {
                         message="Повтори запрос, данные заявки сохранятся"
                         onRetry={() => void candidatesQuery.refetch()}
                       />
+                    ) : candidates.length === 0 ? (
+                      <EmptyState
+                        title="Инженеры не найдены"
+                        description="В справочнике нет доступных сотрудников для назначения"
+                      />
                     ) : (
+                      <>
+                      {candidates.every((candidate) => !candidate.eligible) ? (
+                        <InlineAlert tone="warning" title="Подходящих инженеров нет">
+                          Проверь специализацию и загрузку сотрудников или измени параметры заявки
+                        </InlineAlert>
+                      ) : null}
                       <div className="candidate-list" style={{ marginTop: 10 }}>
                         {candidates.map((candidate) => (
                           <label
@@ -329,6 +347,7 @@ export function MaintenancePage() {
                           </label>
                         ))}
                       </div>
+                      </>
                     )}
                     {selected.allowedActions.includes("reassign") ? (
                       <div className="field" style={{ marginTop: 12 }}>
@@ -367,8 +386,22 @@ export function MaintenancePage() {
                 ) : null}
 
                 {actionMutation.isError ? (
-                  <InlineAlert tone="critical" title="Действие не выполнено">
-                    Версия заявки могла измениться. Данные формы сохранены, обнови карточку и повтори действие
+                  <InlineAlert
+                    tone="critical"
+                    title="Действие не выполнено"
+                    action={
+                      <Button
+                        variant="secondary"
+                        onClick={() => void Promise.all([
+                          ordersQuery.refetch(),
+                          candidatesQuery.refetch(),
+                        ]).then(() => actionMutation.reset())}
+                      >
+                        Обновить данные
+                      </Button>
+                    }
+                  >
+                    <MaintenanceMutationError error={actionMutation.error} />
                   </InlineAlert>
                 ) : null}
               </div>
@@ -378,6 +411,24 @@ export function MaintenancePage() {
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+function MaintenanceMutationError({ error }: { error: unknown }) {
+  const message = error instanceof Error ? error.message : "Backend не принял действие";
+  const repositoryError = error instanceof RepositoryError ? error : null;
+  return (
+    <div>
+      <p>{message}. Данные формы сохранены</p>
+      {repositoryError?.fieldErrors.length ? (
+        <ul>
+          {repositoryError.fieldErrors.map((item) => (
+            <li key={`${item.field}:${item.code}`}>{item.message}</li>
+          ))}
+        </ul>
+      ) : null}
+      {repositoryError ? <small>Trace ID: {repositoryError.correlationId}</small> : null}
     </div>
   );
 }

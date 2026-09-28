@@ -2,7 +2,13 @@
 .git
 .unlazy
 .scratch
+.cache
 __pycache__
 *.pyc
 .env
 ml-data
+frontend/node_modules
+frontend/dist
+frontend/.openai
+frontend/coverage
+*.log

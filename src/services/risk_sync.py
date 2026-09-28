@@ -28,9 +28,13 @@ from src.models.event import Event
 from src.models.risk import SINGLETON_ID, Risk, RiskSyncState
 from src.models.sensor import SensorChannel
 from src.services.event_sync import sync_events
-from src.services.ml_port import MLPredictor, PredictionInput
+from src.services.ml_port import DemoClock, MLPredictor, PredictionInput
 from src.services.ml_predictor_http import MLPredictorError
-from src.services.risk_leveling import assess_forecast, compute_data_health, compute_priority_score
+from src.services.risk_leveling import (
+    assess_forecast,
+    compute_data_health,
+    compute_priority_score,
+)
 
 _BATCH_SIZE = 2000
 
@@ -58,13 +62,22 @@ def risk_type_for_system_type(system_type: str) -> str:
     return _RISK_TYPE_BY_SYSTEM_TYPE.get(system_type, _DEFAULT_RISK_TYPE)
 
 
+def _demo_clock_payload(clock: DemoClock | None) -> dict[str, str] | None:
+    if clock is None:
+        return None
+    return {
+        "requested_as_of_utc": clock.requested_as_of_utc.isoformat(),
+        "anchor_utc": clock.anchor_utc.isoformat(),
+    }
+
+
 async def sync_risks(session: AsyncSession, predictor: MLPredictor, *, now: datetime | None = None) -> int:
     """Materialize Risk rows from newly-alarmed Events, one per sensor group.
 
     Args:
         session: An active async database session.
         predictor: The MLPredictor to call once per sensor group.
-        now: Wall-clock time recorded as as_of/created_at/updated_at
+        now: Operational wall-clock time used for ingestion and SLA
             (defaults to real UTC now; tests pass an explicit value).
 
     Returns:
@@ -132,9 +145,13 @@ async def sync_risks(session: AsyncSession, predictor: MLPredictor, *, now: date
                 last_error = exc
                 continue
 
+            model_as_of = prediction.effective_as_of or now
+            demo_clock = _demo_clock_payload(prediction.demo_clock)
             horizon_hours = prediction.horizon_hours or prediction.prediction_window_hours
             assessment = assess_forecast(
                 prediction.probability,
+                # SLA is operational. It must not be backdated to a historical
+                # model clock used by a demo/replay inference.
                 now,
                 alert=prediction.alert,
                 horizon_hours=horizon_hours,
@@ -146,8 +163,12 @@ async def sync_risks(session: AsyncSession, predictor: MLPredictor, *, now: date
                 continue
             risk_level, threshold, sla_due_at = assessment.risk_level, assessment.threshold, assessment.sla_due_at
             priority_score = compute_priority_score(prediction.probability, now, sla_due_at, now=now)
-            data_health = compute_data_health(now, now=now)
-            window_start = now + timedelta(hours=prediction.lead_min_hours)
+            # In declared demo mode, freshness is evaluated inside the model's
+            # own historical timeline. Without that declaration, a historical
+            # timestamp is honestly reported as stale relative to wall-clock.
+            health_reference = model_as_of if demo_clock is not None else now
+            data_health = compute_data_health(model_as_of, now=health_reference)
+            window_start = model_as_of + timedelta(hours=prediction.lead_min_hours)
             window_end = window_start + timedelta(hours=prediction.prediction_window_hours)
             risk_id = f"risk_{uuid4().hex[:20]}"
 
@@ -159,7 +180,8 @@ async def sync_risks(session: AsyncSession, predictor: MLPredictor, *, now: date
                     target_type="sensor",
                     target_id=sensor_id,
                     facility_id=channel.facility_id,
-                    as_of=now,
+                    as_of=model_as_of,
+                    demo_clock=demo_clock,
                     lead_min_hours=prediction.lead_min_hours,
                     horizon_hours=horizon_hours,
                     prediction_window_start=window_start,

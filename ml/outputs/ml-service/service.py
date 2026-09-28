@@ -109,7 +109,8 @@ def make_handler(predictor, objects=None, pumps=None, quality=None):
                     return self.reply(200 if result['status'] == 'ok' else 422, result)
                 ranked = sorted(results.values(), key=lambda row: (-row.get('probability', -1.0), -row.get('score', -1.0)))
                 self.reply(200, dict(as_of_utc=next((row['as_of_utc'] for row in ranked if 'as_of_utc' in row), None), target=model.api_target, horizon_hours=model.hours,
-                                     alerts=sum(row.get('alert', False) for row in ranked), objects=ranked))
+                                     alerts=sum(row.get('alert', False) for row in ranked), objects=ranked,
+                                     demo_clock=None if predictor.demo_offset is None else dict(requested_as_of_utc=requested.isoformat(), anchor_utc=predictor.demo_anchor.isoformat())))
             except InsufficientData as error:
                 self.reply(422, dict(status='insufficient_data', reason=error.reason, detail=error.detail))
 

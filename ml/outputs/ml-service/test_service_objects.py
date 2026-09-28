@@ -1,3 +1,4 @@
+from datetime import datetime
 from http.server import ThreadingHTTPServer
 import json
 import threading
@@ -14,6 +15,11 @@ class FakeChannels:
 
     def predict(self, target_id, as_of):
         return dict(target_id=target_id)
+
+
+class FakeDemoChannels(FakeChannels):
+    demo_anchor = datetime(2026, 6, 20)
+    demo_offset = demo_anchor - datetime(2026, 9, 28)
 
 
 class FakeObjects:
@@ -42,8 +48,9 @@ class FakeFailures(FakeObjects):
 
 
 class ServiceTests(unittest.TestCase):
-    def start(self, objects, quality=None):
-        server = ThreadingHTTPServer(('127.0.0.1', 0), service.make_handler(FakeChannels(), objects, quality=quality))
+    def start(self, objects, quality=None, channels=None):
+        channels = FakeChannels() if channels is None else channels
+        server = ThreadingHTTPServer(('127.0.0.1', 0), service.make_handler(channels, objects, quality=quality))
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
@@ -63,6 +70,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual([row['object_id'] for row in ranked['objects']], ['b', 'c', 'a', 'd'])
         self.assertEqual((ranked['alerts'], ranked['horizon_hours'], ranked['as_of_utc'], ranked['target']), (2, 72, '2025-01-01T00:00:00', 'incident'))
+        self.assertIsNone(ranked['demo_clock'])
         code, failures = self.call(base, '/risk_map', {'as_of': '2025-01-01', 'target': 'failure'})
         self.assertEqual((code, failures['target'], failures['horizon_hours'], failures['alerts']), (200, 'failure', 168, 0))
         self.assertEqual(self.call(base, '/predict_object', {'object_id': 'd', 'as_of': '2025-01-01', 'target': 'failure'})[0], 200)
@@ -75,6 +83,16 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call(base, '/predict_object', {'object_id': 'a'})[0], 400)
         self.assertEqual(self.call(base, '/risk_map', {'as_of': '2000-01-01'}), (422, dict(status='insufficient_data', reason='stale_journal', detail='x')))
         self.assertEqual(self.call(base, '/predict', {'target_id': 'sensor_1', 'as_of': '2025-01-01'}), (200, dict(target_id='sensor_1')))
+
+    def test_risk_map_exposes_demo_clock(self):
+        base = self.start(dict(incident=FakeObjects()), channels=FakeDemoChannels())
+        code, ranked = self.call(base, '/risk_map', {'as_of': '2026-09-28T03:00:00+03:00'})
+        self.assertEqual(code, 200)
+        self.assertEqual(ranked['as_of_utc'], '2026-06-20T00:00:00')
+        self.assertEqual(ranked['demo_clock'], {
+            'requested_as_of_utc': '2026-09-28T00:00:00',
+            'anchor_utc': '2026-06-20T00:00:00',
+        })
 
     def fetch(self, base, path):
         try:

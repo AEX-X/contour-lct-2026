@@ -16,8 +16,8 @@ import { facilityStatusLabels, pluralizeRu, statusLabels } from "../app/labels";
 import { EmptyState, PageError, PageLoading } from "../components/StateViews";
 
 export function OperationsPage() {
-  const { repository, runtime, invalidateAll } = useContour();
-  const supportsShiftAssignments = runtime.mode === "mock";
+  const { repository, runtime, currentUser, invalidateAll } = useContour();
+  const supportsShiftAssignments = runtime.mode === "mock" || currentUser.permissions.includes("facility.dispatcher.assign");
   const commandMeta = useRepositoryCommandMeta();
   const facilitiesQuery = useFacilities();
   const ordersQuery = useWorkOrders();
@@ -29,6 +29,12 @@ export function OperationsPage() {
   const orders = ordersQuery.data ?? [];
   const dispatchers = dispatchersQuery.data ?? [];
   const facilityToAssign = facilities.find((facility) => facility.id === assignFacilityId) ?? null;
+  const closeAssignmentModal = () => {
+    if (assignMutation.isPending) return;
+    setAssignFacilityId(null);
+    setDispatcherId("");
+    assignMutation.reset();
+  };
 
   const assignMutation = useMutation({
     mutationFn: async () => {
@@ -107,7 +113,11 @@ export function OperationsPage() {
               variant="secondary"
               size="medium"
               startIcon={<UserPlus size={18} />}
-              onClick={() => setAssignFacilityId(unassignedFacilities[0]!.id)}
+              onClick={() => {
+                setDispatcherId("");
+                assignMutation.reset();
+                setAssignFacilityId(unassignedFacilities[0]!.id);
+              }}
             >
               Назначить смену
             </Button>
@@ -191,7 +201,11 @@ export function OperationsPage() {
                             <button
                               className="text-action tone-warning"
                               type="button"
-                              onClick={() => setAssignFacilityId(facility.id)}
+                              onClick={() => {
+                                setDispatcherId("");
+                                assignMutation.reset();
+                                setAssignFacilityId(facility.id);
+                              }}
                             >
                               Назначить
                             </button>
@@ -255,12 +269,12 @@ export function OperationsPage() {
 
       {supportsShiftAssignments ? <Modal
         open={Boolean(facilityToAssign)}
-        onClose={() => setAssignFacilityId(null)}
+        onClose={closeAssignmentModal}
         title="Назначить диспетчера на смену"
         description={facilityToAssign?.name}
         footer={
           <div className="inline-actions" style={{ justifyContent: "flex-end", width: "100%" }}>
-            <Button variant="secondary" onClick={() => setAssignFacilityId(null)}>
+            <Button variant="secondary" disabled={assignMutation.isPending} onClick={closeAssignmentModal}>
               Отмена
             </Button>
             <Button
@@ -292,7 +306,9 @@ export function OperationsPage() {
         </div>
         {assignMutation.isError ? (
           <InlineAlert tone="critical" title="Назначение не сохранено" style={{ marginTop: 12 }}>
-            Возможно, объект уже изменён другим пользователем. Закрой окно и повтори действие
+            {assignMutation.error instanceof Error
+              ? assignMutation.error.message
+              : "Повтори действие после обновления данных"}
           </InlineAlert>
         ) : null}
       </Modal> : null}

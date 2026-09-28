@@ -379,13 +379,131 @@
         }
       }
     },
+    "/api/v1/facility-dispatchers": {
+      "get": {
+        "tags": [
+          "facilities"
+        ],
+        "summary": "Get Facility Dispatchers",
+        "operationId": "get_facility_dispatchers_api_v1_facility_dispatchers_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FacilityDispatcherList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/facilities/{facility_id}/dispatcher-assignment": {
+      "post": {
+        "tags": [
+          "facilities"
+        ],
+        "summary": "Assign Facility Dispatcher",
+        "description": "Assign exactly one facility to a technical dispatcher.",
+        "operationId": "assign_facility_dispatcher_api_v1_facilities__facility_id__dispatcher_assignment_post",
+        "parameters": [
+          {
+            "name": "facility_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Facility Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignFacilityDispatcherRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignFacilityDispatcherResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/facilities/{facility_id}/hierarchy": {
       "get": {
         "tags": [
           "hierarchy"
         ],
         "summary": "Get Hierarchy",
-        "description": "Return every node in a facility's tree, enforcing the caller's scope.\n\nArgs:\n    facility_id: The facility whose tree to fetch.\n    user: The authenticated caller, injected by get_current_user.\n\nReturns:\n    The full node list (empty if the facility has no nodes yet).\n\nRaises:\n    ApiError: 404 if the facility does not exist; 403 if it exists but\n        is outside the caller's scope.",
+        "description": "Return every node in a facility's tree, enforcing the caller's scope.\n\nArgs:\n    facility_id: The facility whose tree to fetch.\n    user: The authenticated caller, injected by require_permission.\n\nReturns:\n    The full node list with real descendant sensor counts and latest\n    telemetry state aggregates (empty if the facility has no nodes yet).\n\nRaises:\n    ApiError: 404 if the facility does not exist; 403 if it exists but\n        is outside the caller's scope.",
         "operationId": "get_hierarchy_api_v1_facilities__facility_id__hierarchy_get",
         "parameters": [
           {
@@ -1298,7 +1416,7 @@
           "risks"
         ],
         "summary": "Get Risks",
-        "description": "List the risk forecast queue within the caller's scope.\n\nArgs:\n    facility_id: Optional exact facility filter.\n    risk_type: Optional exact RISK_TYPES filter.\n    risk_level: Optional exact RISK_LEVELS filter.\n    decision_status: Optional exact decision_status filter.\n    from_: Optional ISO 8601 inclusive lower bound on as_of.\n    to: Optional ISO 8601 inclusive upper bound on as_of.\n    cursor: Opaque pagination cursor.\n    limit: Page size, 1-200.\n    user: The authenticated caller, injected by require_permission.\n\nReturns:\n    A RiskListEnvelope sorted priority_score desc, prediction_window_start asc.",
+        "description": "List the risk forecast queue within the caller's scope.\n\nArgs:\n    facility_id: Optional exact facility filter.\n    risk_type: Optional exact RISK_TYPES filter.\n    risk_level: Optional exact RISK_LEVELS filter.\n    decision_status: Optional exact decision_status filter.\n    include_invalidated: Include archived predictions with unverifiable\n        historical model-clock provenance.\n    from_: Optional ISO 8601 inclusive lower bound on as_of.\n    to: Optional ISO 8601 inclusive upper bound on as_of.\n    cursor: Opaque pagination cursor.\n    limit: Page size, 1-200.\n    user: The authenticated caller, injected by require_permission.\n\nReturns:\n    A RiskListEnvelope sorted priority_score desc, prediction_window_start asc.",
         "operationId": "get_risks_api_v1_risks_get",
         "parameters": [
           {
@@ -1363,6 +1481,16 @@
                 }
               ],
               "title": "Decision Status"
+            }
+          },
+          {
+            "name": "include_invalidated",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Invalidated"
             }
           },
           {
@@ -1738,7 +1866,6 @@
           "work-orders"
         ],
         "summary": "Post Work Order",
-        "description": "Create a draft work order.\n\nArgs:\n    body: The creation request; mode must be \"draft\".\n    request: The current request, used to enrich the audit journal entry.\n    user: The authenticated caller, injected by require_any_permission.\n\nReturns:\n    The created work order.\n\nRaises:\n    ApiError: 422 for mode != \"draft\" or an unknown work_type/priority/\n        target_entity_type; 403 if facility_id is outside the caller's scope.",
         "operationId": "post_work_order_api_v1_work_orders_post",
         "parameters": [
           {
@@ -1796,7 +1923,6 @@
           "work-orders"
         ],
         "summary": "Get Work Orders",
-        "description": "List work orders within the caller's scope, newest first.\n\nArgs:\n    facility_id: Optional exact facility filter.\n    status: Optional exact status filter.\n    work_type: Optional exact WORK_TYPES filter.\n    cursor: Opaque pagination cursor.\n    limit: Page size, 1-200.\n    user: The authenticated caller, injected by require_permission.\n\nReturns:\n    A WorkOrderListEnvelope containing only work orders the caller may see.",
         "operationId": "get_work_orders_api_v1_work_orders_get",
         "parameters": [
           {
@@ -1845,6 +1971,16 @@
                 }
               ],
               "title": "Work Type"
+            }
+          },
+          {
+            "name": "assigned_to_current_user",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Assigned To Current User"
             }
           },
           {
@@ -1916,13 +2052,353 @@
         }
       }
     },
+    "/api/v1/work-orders/{work_order_id}": {
+      "get": {
+        "tags": [
+          "work-orders"
+        ],
+        "summary": "Get Work Order Detail",
+        "operationId": "get_work_order_detail_api_v1_work_orders__work_order_id__get",
+        "parameters": [
+          {
+            "name": "work_order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Work Order Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkOrderOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/work-orders/{work_order_id}/actions": {
+      "post": {
+        "tags": [
+          "work-orders"
+        ],
+        "summary": "Post Work Order Action",
+        "operationId": "post_work_order_action_api_v1_work_orders__work_order_id__actions_post",
+        "parameters": [
+          {
+            "name": "work_order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Work Order Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkOrderActionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkOrderActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/engineers": {
+      "get": {
+        "tags": [
+          "work-orders"
+        ],
+        "summary": "Get Engineers",
+        "operationId": "get_engineers_api_v1_engineers_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineerListEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/work-orders/{work_order_id}/engineer-candidates": {
+      "get": {
+        "tags": [
+          "work-orders"
+        ],
+        "summary": "Get Work Order Engineer Candidates",
+        "operationId": "get_work_order_engineer_candidates_api_v1_work_orders__work_order_id__engineer_candidates_get",
+        "parameters": [
+          {
+            "name": "work_order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Work Order Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineerListEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications": {
+      "get": {
+        "tags": [
+          "work-orders"
+        ],
+        "summary": "Get Notifications",
+        "operationId": "get_notifications_api_v1_notifications_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationListEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/{notification_id}/read": {
+      "post": {
+        "tags": [
+          "work-orders"
+        ],
+        "summary": "Read Notification",
+        "operationId": "read_notification_api_v1_notifications__notification_id__read_post",
+        "parameters": [
+          {
+            "name": "notification_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Notification Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/audit": {
       "get": {
         "tags": [
           "audit"
         ],
         "summary": "Get Audit Journal",
-        "description": "List journaled user actions, newest first.\n\nArgs:\n    user_id: Optional exact actor filter.\n    action: Optional exact action filter, e.g. \"POST /api/v1/work-orders\".\n    from_: Optional ISO 8601 inclusive lower bound on occurred_at.\n    to: Optional ISO 8601 inclusive upper bound on occurred_at.\n    cursor: Opaque pagination cursor from the previous page's meta.\n    limit: Page size, 1-200.\n    _: The caller; must hold audit.read.\n\nReturns:\n    An AuditListEnvelope with one page of entries.",
+        "description": "List journaled user actions, newest first.\n\nArgs:\n    user_id: Optional exact actor filter.\n    action: Optional exact action filter, e.g. \"POST /api/v1/work-orders\".\n    target_type: Optional exact target resource type filter.\n    target_id: Optional exact target resource identifier filter.\n    from_: Optional ISO 8601 inclusive lower bound on occurred_at.\n    to: Optional ISO 8601 inclusive upper bound on occurred_at.\n    cursor: Opaque pagination cursor from the previous page's meta.\n    limit: Page size, 1-200.\n    _: The caller; must hold audit.read.\n\nReturns:\n    An AuditListEnvelope with one page of entries.",
         "operationId": "get_audit_journal_api_v1_audit_get",
         "parameters": [
           {
@@ -1955,6 +2431,38 @@
                 }
               ],
               "title": "Action"
+            }
+          },
+          {
+            "name": "target_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Type"
+            }
+          },
+          {
+            "name": "target_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Id"
             }
           },
           {
@@ -2084,6 +2592,95 @@
   },
   "components": {
     "schemas": {
+      "AccessGrantOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "work_order_id": {
+            "type": "string",
+            "title": "Work Order Id"
+          },
+          "facility_id": {
+            "type": "string",
+            "title": "Facility Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "access_level": {
+            "type": "string",
+            "const": "technical_full",
+            "title": "Access Level",
+            "default": "technical_full"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "offline_cache_expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offline Cache Expires At"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "work_order_id",
+          "facility_id",
+          "user_id",
+          "starts_at",
+          "expires_at",
+          "revoked_at",
+          "status",
+          "offline_cache_expires_at",
+          "version"
+        ],
+        "title": "AccessGrantOut"
+      },
       "AcknowledgeRequest": {
         "properties": {
           "expected_version": {
@@ -2147,6 +2744,11 @@
             "type": "integer",
             "title": "Collector Count"
           },
+          "equipment_count": {
+            "type": "integer",
+            "title": "Equipment Count",
+            "default": 0
+          },
           "sensor_count": {
             "type": "integer",
             "title": "Sensor Count"
@@ -2164,6 +2766,77 @@
         ],
         "title": "Assets",
         "description": "Counts of the facility's owned equipment/sensors."
+      },
+      "AssignFacilityDispatcherRequest": {
+        "properties": {
+          "dispatcher_id": {
+            "type": "string",
+            "title": "Dispatcher Id"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "client_occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Client Occurred At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dispatcher_id",
+          "starts_at",
+          "ends_at",
+          "expected_version",
+          "idempotency_key",
+          "client_occurred_at"
+        ],
+        "title": "AssignFacilityDispatcherRequest"
+      },
+      "AssignFacilityDispatcherResponse": {
+        "properties": {
+          "assignment": {
+            "$ref": "#/components/schemas/FacilityDispatcherAssignmentOut"
+          },
+          "facility_id": {
+            "type": "string",
+            "title": "Facility Id"
+          },
+          "facility_version": {
+            "type": "integer",
+            "title": "Facility Version"
+          },
+          "audit_event_id": {
+            "type": "string",
+            "title": "Audit Event Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "assignment",
+          "facility_id",
+          "facility_version",
+          "audit_event_id"
+        ],
+        "title": "AssignFacilityDispatcherResponse"
       },
       "AuditEntryOut": {
         "properties": {
@@ -2463,6 +3136,13 @@
             "type": "string",
             "title": "Description"
           },
+          "symptoms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Symptoms"
+          },
           "comment": {
             "anyOf": [
               {
@@ -2473,6 +3153,31 @@
               }
             ],
             "title": "Comment"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 8
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "client_occurred_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Occurred At"
           }
         },
         "type": "object",
@@ -2487,7 +3192,7 @@
           "description"
         ],
         "title": "CreateWorkOrderRequest",
-        "description": "Body for POST /api/v1/work-orders.\n\nmode must be \"draft\" -- the only mode this backend ever supports, since\nno real external work-order system exists to submit to."
+        "description": "Backward-compatible draft creation request."
       },
       "CurrentReading": {
         "properties": {
@@ -2617,6 +3322,124 @@
         ],
         "title": "DegradeRequest",
         "description": "Body for POST /api/v1/system/source-health/{source}/degrade."
+      },
+      "DemoClockOut": {
+        "properties": {
+          "requested_as_of_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Requested As Of Utc"
+          },
+          "anchor_utc": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Anchor Utc"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requested_as_of_utc",
+          "anchor_utc"
+        ],
+        "title": "DemoClockOut",
+        "description": "Historical model clock declared by the ML service."
+      },
+      "EngineerCandidateOut": {
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/EngineerUserOut"
+          },
+          "active_work_order_count": {
+            "type": "integer",
+            "title": "Active Work Order Count"
+          },
+          "eligible": {
+            "type": "boolean",
+            "title": "Eligible"
+          },
+          "eligibility_reason": {
+            "type": "string",
+            "title": "Eligibility Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user",
+          "active_work_order_count",
+          "eligible",
+          "eligibility_reason"
+        ],
+        "title": "EngineerCandidateOut"
+      },
+      "EngineerListEnvelope": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/EngineerCandidateOut"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/EngineerListMeta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "EngineerListEnvelope"
+      },
+      "EngineerListMeta": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "generated_at"
+        ],
+        "title": "EngineerListMeta"
+      },
+      "EngineerUserOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "availability": {
+            "type": "string",
+            "title": "Availability"
+          },
+          "specialization_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specialization Codes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "availability",
+          "specialization_codes"
+        ],
+        "title": "EngineerUserOut"
       },
       "EventListEnvelope": {
         "properties": {
@@ -2776,6 +3599,89 @@
         "title": "EventOut",
         "description": "One event/incident-journal entry.\n\nis_confirmed_incident/verification_result/resolved_at/related_risk_id\nare distinct fields from state (see src/models/event.py) -- an alarm\nevent and a confirmed incident are never collapsed into one status."
       },
+      "FacilityDispatcherAssignmentOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "facility_id": {
+            "type": "string",
+            "title": "Facility Id"
+          },
+          "dispatcher_id": {
+            "type": "string",
+            "title": "Dispatcher Id"
+          },
+          "assigned_by": {
+            "$ref": "#/components/schemas/UserRefOut"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Starts At"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ends At"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "facility_id",
+          "dispatcher_id",
+          "assigned_by",
+          "starts_at",
+          "ends_at",
+          "status",
+          "version"
+        ],
+        "title": "FacilityDispatcherAssignmentOut"
+      },
+      "FacilityDispatcherList": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/FacilityDispatcherOut"
+            },
+            "type": "array",
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "FacilityDispatcherList"
+      },
+      "FacilityDispatcherOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "title": "FacilityDispatcherOut"
+      },
       "FacilityListEnvelope": {
         "properties": {
           "data": {
@@ -2835,6 +3741,21 @@
             "type": "string",
             "title": "Id"
           },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "responsible_dispatcher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Responsible Dispatcher Id"
+          },
           "display_name": {
             "type": "string",
             "title": "Display Name"
@@ -2842,6 +3763,32 @@
           "facility_type": {
             "type": "string",
             "title": "Facility Type"
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "internal_code": {
+            "type": "string",
+            "title": "Internal Code"
+          },
+          "rosta_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rosta Code"
           },
           "location": {
             "$ref": "#/components/schemas/Location"
@@ -2882,8 +3829,11 @@
         "type": "object",
         "required": [
           "id",
+          "version",
+          "responsible_dispatcher_id",
           "display_name",
           "facility_type",
+          "internal_code",
           "location",
           "current_state",
           "forecast",
@@ -3020,19 +3970,25 @@
           },
           "sensor_count": {
             "type": "integer",
-            "title": "Sensor Count"
+            "minimum": 0.0,
+            "title": "Sensor Count",
+            "description": "Linked sensor channels at this node or any descendant."
           },
           "attention_count": {
             "type": "integer",
-            "title": "Attention Count"
+            "minimum": 0.0,
+            "title": "Attention Count",
+            "description": "Descendant sensors whose usable latest state is warning, fault, or alarm; unknown telemetry is not counted as an incident."
           },
           "current_state": {
             "type": "string",
-            "title": "Current State"
+            "title": "Current State",
+            "description": "Worst descendant telemetry state: alarm, fault, warning, unknown, or normal. Unavailable telemetry is unknown."
           },
           "risk_level": {
             "type": "string",
-            "title": "Risk Level"
+            "title": "Risk Level",
+            "description": "Always unknown until risks have an unambiguous hierarchy-node binding."
           },
           "has_children": {
             "type": "boolean",
@@ -3055,7 +4011,7 @@
           "has_children"
         ],
         "title": "HierarchyNodeOut",
-        "description": "One node of a facility's hierarchy tree.\n\nsensor_count/attention_count/current_state/risk_level are honest MVP\nplaceholders (0/0/\"unknown\"/\"unknown\") pending ticket 05 (sensor\ntimeseries) and ticket 08 (risk); children_count/has_children/path\nare real, computed from the actual adjacency-list data."
+        "description": "One node of a facility's hierarchy tree.\n\n``sensor_count`` contains real linked sensor channels at this node or any\ndescendant. ``attention_count`` is the subset with a usable latest state\nof warning, fault, or alarm. ``current_state`` is the worst descendant\ntelemetry state; missing or unavailable telemetry is unknown rather than\nan invented fault. ``risk_level`` remains unknown until risks have an\nunambiguous hierarchy-node binding. Tree/path fields are computed from the\nactual adjacency-list data."
       },
       "Incidents": {
         "properties": {
@@ -3146,9 +4102,32 @@
       },
       "MeOut": {
         "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
           "role": {
             "type": "string",
             "title": "Role"
+          },
+          "organization_id": {
+            "type": "string",
+            "title": "Organization Id"
+          },
+          "specialization_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specialization Codes"
+          },
+          "availability": {
+            "type": "string",
+            "title": "Availability"
           },
           "permissions": {
             "items": {
@@ -3171,7 +4150,12 @@
         },
         "type": "object",
         "required": [
+          "user_id",
+          "display_name",
           "role",
+          "organization_id",
+          "specialization_codes",
+          "availability",
           "permissions",
           "scope",
           "timezone",
@@ -3245,6 +4229,134 @@
         "title": "ModelAlertRule",
         "description": "How a risk is leveled when the forecast carries the model's own alert.\n\nApplies instead of `risk_levels`/`sla_params` for such forecasts; a risk\nshows which rule was used through its `alert` field (null = shared scale)."
       },
+      "NotificationListEnvelope": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationOut"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/NotificationListMeta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "NotificationListEnvelope"
+      },
+      "NotificationListMeta": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "unread": {
+            "type": "integer",
+            "title": "Unread"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "unread",
+          "generated_at"
+        ],
+        "title": "NotificationListMeta"
+      },
+      "NotificationOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "priority": {
+            "type": "string",
+            "title": "Priority"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "entity_type": {
+            "type": "string",
+            "title": "Entity Type"
+          },
+          "entity_id": {
+            "type": "string",
+            "title": "Entity Id"
+          },
+          "deep_link": {
+            "type": "string",
+            "title": "Deep Link"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "group_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "type",
+          "priority",
+          "title",
+          "body",
+          "entity_type",
+          "entity_id",
+          "deep_link",
+          "created_at",
+          "read_at",
+          "group_key"
+        ],
+        "title": "NotificationOut"
+      },
       "NumericPoint": {
         "properties": {
           "timestamp": {
@@ -3313,6 +4425,35 @@
         ],
         "title": "NumericSeriesOut",
         "description": "The numeric series response shape."
+      },
+      "PartUsage": {
+        "properties": {
+          "part_code": {
+            "type": "string",
+            "title": "Part Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Quantity"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "part_code",
+          "name",
+          "quantity",
+          "unit"
+        ],
+        "title": "PartUsage"
       },
       "PredictionWindow": {
         "properties": {
@@ -3496,6 +4637,147 @@
         "title": "RejectRequest",
         "description": "Body for POST /api/v1/risks/{risk_id}/reject.\n\nreason_code is Optional at the schema level -- its presence is a\ndomain rule (contract: \"reject requires reason_code\"), enforced as a\n422 DOMAIN_VALIDATION_ERROR by the endpoint, not a 400 structural\nvalidation error."
       },
+      "RepairResultOut": {
+        "properties": {
+          "failure_confirmed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Confirmed"
+          },
+          "root_cause_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Cause Code"
+          },
+          "diagnosis": {
+            "type": "string",
+            "title": "Diagnosis"
+          },
+          "actions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Actions"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/PartUsage"
+            },
+            "type": "array",
+            "title": "Parts"
+          },
+          "labor_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labor Minutes"
+          },
+          "equipment_restored": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equipment Restored"
+          },
+          "control_check_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Control Check Result"
+          },
+          "residual_risk": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Residual Risk"
+          },
+          "recommendations": {
+            "type": "string",
+            "title": "Recommendations"
+          },
+          "requires_follow_up": {
+            "type": "boolean",
+            "title": "Requires Follow Up"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserRefOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "failure_confirmed",
+          "root_cause_code",
+          "diagnosis",
+          "actions",
+          "parts",
+          "equipment_restored",
+          "control_check_result",
+          "residual_risk",
+          "recommendations",
+          "requires_follow_up",
+          "completed_at",
+          "author"
+        ],
+        "title": "RepairResultOut"
+      },
       "RiskLevelThreshold": {
         "properties": {
           "id": {
@@ -3600,6 +4882,20 @@
             "format": "date-time",
             "title": "As Of"
           },
+          "demo_clock": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DemoClockOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_invalidated": {
+            "type": "boolean",
+            "title": "Is Invalidated"
+          },
           "lead_min_hours": {
             "type": "number",
             "title": "Lead Min Hours"
@@ -3699,6 +4995,7 @@
           "risk_type",
           "target",
           "as_of",
+          "is_invalidated",
           "lead_min_hours",
           "horizon_hours",
           "prediction_window",
@@ -3904,13 +5201,6 @@
             "type": "null",
             "title": "Position"
           },
-          "hierarchy_path": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Hierarchy Path"
-          },
           "current_reading": {
             "anyOf": [
               {
@@ -3923,7 +5213,21 @@
           },
           "current_state": {
             "type": "string",
-            "title": "Current State"
+            "title": "Current State",
+            "default": "unknown"
+          },
+          "data_health": {
+            "type": "string",
+            "title": "Data Health",
+            "default": "unavailable"
+          },
+          "hierarchy_path": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hierarchy Path",
+            "description": "User-facing display names from the facility root to the sensor; internal hierarchy ids are exposed by hierarchy_node_id instead."
           },
           "forecast_summary": {
             "anyOf": [
@@ -3935,10 +5239,6 @@
               }
             ],
             "title": "Forecast Summary"
-          },
-          "data_health": {
-            "type": "string",
-            "title": "Data Health"
           },
           "maintenance_state": {
             "type": "string",
@@ -3957,10 +5257,7 @@
           "facility_id",
           "hierarchy_node_id",
           "hierarchy_path",
-          "current_reading",
-          "current_state",
           "forecast_summary",
-          "data_health",
           "maintenance_state"
         ],
         "title": "SensorDetailOut",
@@ -4079,6 +5376,26 @@
           "position": {
             "type": "null",
             "title": "Position"
+          },
+          "current_reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CurrentReading"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_state": {
+            "type": "string",
+            "title": "Current State",
+            "default": "unknown"
+          },
+          "data_health": {
+            "type": "string",
+            "title": "Data Health",
+            "default": "unavailable"
           }
         },
         "type": "object",
@@ -4094,7 +5411,7 @@
           "hierarchy_node_id"
         ],
         "title": "SensorOut",
-        "description": "A sensor channel as it appears in the list."
+        "description": "A sensor channel and its latest available telemetry snapshot."
       },
       "SensorType": {
         "properties": {
@@ -4128,6 +5445,136 @@
         ],
         "title": "SensorType",
         "description": "One sensor type from the equipment/channel catalogue."
+      },
+      "SlaOut": {
+        "properties": {
+          "policy_id": {
+            "type": "string",
+            "title": "Policy Id"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "acceptance_due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acceptance Due At"
+          },
+          "arrival_due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arrival Due At"
+          },
+          "resolution_due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Due At"
+          },
+          "current_stage": {
+            "type": "string",
+            "title": "Current Stage"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "paused_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paused At"
+          },
+          "pause_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pause Reason"
+          },
+          "breach_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breach Stage"
+          },
+          "remaining_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Seconds"
+          },
+          "server_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Server Time"
+          }
+        },
+        "type": "object",
+        "required": [
+          "policy_id",
+          "started_at",
+          "acceptance_due_at",
+          "arrival_due_at",
+          "resolution_due_at",
+          "current_stage",
+          "state",
+          "paused_at",
+          "pause_reason",
+          "breach_stage",
+          "remaining_seconds",
+          "server_time"
+        ],
+        "title": "SlaOut"
       },
       "SlaParam": {
         "properties": {
@@ -4325,6 +5772,24 @@
         "title": "UnitOfMeasure",
         "description": "A unit of measurement used by numeric sensor readings."
       },
+      "UserRefOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "title": "UserRefOut"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -4365,6 +5830,206 @@
         ],
         "title": "ValidationError"
       },
+      "WorkOrderActionRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "edit",
+              "submit",
+              "start_triage",
+              "request_clarification",
+              "resubmit_clarification",
+              "finalize_priority",
+              "assign",
+              "reassign",
+              "accept",
+              "decline",
+              "mark_en_route",
+              "start_work",
+              "wait_access",
+              "wait_parts",
+              "resume_work",
+              "submit_result",
+              "start_verification",
+              "return_for_rework",
+              "close",
+              "cancel",
+              "override"
+            ],
+            "title": "Action"
+          },
+          "expected_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Expected Version"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 8,
+            "title": "Idempotency Key"
+          },
+          "client_occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Client Occurred At"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action",
+          "expected_version",
+          "idempotency_key",
+          "client_occurred_at",
+          "payload"
+        ],
+        "title": "WorkOrderActionRequest"
+      },
+      "WorkOrderActionResponse": {
+        "properties": {
+          "work_order": {
+            "$ref": "#/components/schemas/WorkOrderOut"
+          },
+          "applied_action": {
+            "type": "string",
+            "enum": [
+              "edit",
+              "submit",
+              "start_triage",
+              "request_clarification",
+              "resubmit_clarification",
+              "finalize_priority",
+              "assign",
+              "reassign",
+              "accept",
+              "decline",
+              "mark_en_route",
+              "start_work",
+              "wait_access",
+              "wait_parts",
+              "resume_work",
+              "submit_result",
+              "start_verification",
+              "return_for_rework",
+              "close",
+              "cancel",
+              "override"
+            ],
+            "title": "Applied Action"
+          },
+          "audit_event_id": {
+            "type": "string",
+            "title": "Audit Event Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "work_order",
+          "applied_action",
+          "audit_event_id"
+        ],
+        "title": "WorkOrderActionResponse"
+      },
+      "WorkOrderAssignmentOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "work_order_id": {
+            "type": "string",
+            "title": "Work Order Id"
+          },
+          "engineer_id": {
+            "type": "string",
+            "title": "Engineer Id"
+          },
+          "assigned_by": {
+            "$ref": "#/components/schemas/UserRefOut"
+          },
+          "assigned_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Assigned At"
+          },
+          "accepted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "declined_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declined At"
+          },
+          "decline_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decline Reason"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "work_order_id",
+          "engineer_id",
+          "assigned_by",
+          "assigned_at",
+          "accepted_at",
+          "declined_at",
+          "decline_reason",
+          "completed_at",
+          "status",
+          "version"
+        ],
+        "title": "WorkOrderAssignmentOut"
+      },
       "WorkOrderListEnvelope": {
         "properties": {
           "data": {
@@ -4383,8 +6048,7 @@
           "data",
           "meta"
         ],
-        "title": "WorkOrderListEnvelope",
-        "description": "The standard {data, meta} envelope for GET /api/v1/work-orders."
+        "title": "WorkOrderListEnvelope"
       },
       "WorkOrderListMeta": {
         "properties": {
@@ -4415,8 +6079,7 @@
           "total",
           "generated_at"
         ],
-        "title": "WorkOrderListMeta",
-        "description": "Cursor-pagination metadata for the work-order list envelope."
+        "title": "WorkOrderListMeta"
       },
       "WorkOrderOut": {
         "properties": {
@@ -4475,6 +6138,13 @@
             "type": "string",
             "title": "Description"
           },
+          "symptoms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Symptoms"
+          },
           "comment": {
             "anyOf": [
               {
@@ -4507,6 +6177,110 @@
           "version": {
             "type": "integer",
             "title": "Version"
+          },
+          "assigned_engineer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Engineer Id"
+          },
+          "coordinator_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coordinator Id"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "sla_policy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Policy Id"
+          },
+          "sla": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SlaOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repair_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RepairResultOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "active_assignment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkOrderAssignmentOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "access_grant": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessGrantOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "allowed_actions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Actions"
           }
         },
         "type": "object",
@@ -4529,7 +6303,7 @@
           "version"
         ],
         "title": "WorkOrderOut",
-        "description": "One work order's full representation."
+        "description": "One work order plus its current assignment, grant, SLA, and actions."
       },
       "WorkOrderStatus": {
         "properties": {

@@ -14,9 +14,11 @@ import { useForm } from "react-hook-form";
 import { Link, NavLink, useNavigate, useParams } from "react-router-dom";
 import { z } from "zod";
 import {
+  RepositoryError,
   deriveFacilityOperationalState,
   isRiskActiveAt,
   type RiskForecast,
+  type WorkOrder,
   type WorkOrderPriority,
   type WorkOrderTarget,
 } from "../domain";
@@ -72,7 +74,7 @@ export function FacilityPage({
 }) {
   const params = useParams();
   const navigate = useNavigate();
-  const { currentUser, profiles, repository, invalidateAll } = useContour();
+  const { currentUser, profiles, repository, runtime, invalidateAll } = useContour();
   const commandMeta = useRepositoryCommandMeta();
   const facilityId = explicitFacilityId ?? params.facilityId;
   const facilityQuery = useFacility(facilityId);
@@ -312,6 +314,7 @@ export function FacilityPage({
                     confirming={confirmRiskMutation.isPending && confirmRiskMutation.variables?.id === risk.id}
                     acknowledging={acknowledgeRiskMutation.isPending && acknowledgeRiskMutation.variables?.id === risk.id}
                     hasIncident={incidents.some((incident) => incident.sourceRiskId === risk.id && incident.status !== "resolved")}
+                    linkedOrders={orders.filter((order) => order.source.type === "risk" && order.source.id === risk.id)}
                     onConfirm={() => confirmRiskMutation.mutate(risk)}
                     onAcknowledge={() => acknowledgeRiskMutation.mutate(risk)}
                     onCreate={() => {
@@ -331,6 +334,7 @@ export function FacilityPage({
                 confirming={confirmRiskMutation.isPending && confirmRiskMutation.variables?.id === topRisk.id}
                 acknowledging={acknowledgeRiskMutation.isPending && acknowledgeRiskMutation.variables?.id === topRisk.id}
                 hasIncident={incidents.some((incident) => incident.sourceRiskId === topRisk.id && incident.status !== "resolved")}
+                linkedOrders={orders.filter((order) => order.source.type === "risk" && order.source.id === topRisk.id)}
                 onConfirm={() => confirmRiskMutation.mutate(topRisk)}
                 onAcknowledge={() => acknowledgeRiskMutation.mutate(topRisk)}
                 onCreate={() => {
@@ -380,7 +384,11 @@ export function FacilityPage({
                     </span>
                     <span>
                       <strong>{sensor.name}</strong>
-                      <small className="muted">{sensor.lastReading?.value ?? "Нет данных"} {sensor.unit}</small>
+                      <small className="muted">
+                        {sensor.lastReading
+                          ? `${sensor.lastReading.value}${sensor.unit ? ` ${sensor.unit}` : ""}`
+                          : sensor.lastValueText ?? "Нет данных"}
+                      </small>
                     </span>
                     <StatusBadge tone={sensorTone(sensor.status)}>{sensorStatus(sensor.status)}</StatusBadge>
                   </li>
@@ -446,17 +454,19 @@ export function FacilityPage({
               <div style={{ marginTop: 18 }}>
                 {sensors.length ? (
                   <Progress
-                    label="Доступность датчиков"
+                    label="Датчики с сохранённым показанием"
                     value={Math.round((facility.sensorAvailability ?? 0) * 100)}
-                    tone={facility.sensorAvailability === null ? "neutral" : facility.sensorAvailability >= 0.9 ? "success" : "warning"}
+                    tone={facility.sensorAvailability === null ? "neutral" : "info"}
                     showValue={facility.sensorAvailability !== null}
                   />
                 ) : (
-                  <p className="muted">Агрегированная доступность СМВУ: {facility.sensorAvailability === null ? "нет данных" : formatPercent(facility.sensorAvailability)}. Детализация реестра не загружена</p>
+                  <p className="muted">Покрытие последними показаниями: {facility.sensorAvailability === null ? "нет данных" : formatPercent(facility.sensorAvailability)}. Детализация реестра не загружена</p>
                 )}
+                <p className="muted" style={{ marginTop: 8 }}>Доля датчиков с любым последним показанием. Не показывает свежесть или текущую связь</p>
               </div>
               <p className="provenance-note" style={{ marginTop: 16 }}>
-                Демонстрационные данные. Реальные схемы и реквизиты не подключены
+                Источник: {facility.provenance.sourceLabel}
+                {facility.provenance.note ? ` · ${facility.provenance.note}` : ""}
               </p>
             </div>
           </section>
@@ -514,7 +524,9 @@ export function FacilityPage({
             : null;
           const input = {
             source: sourceRisk
-              ? { type: "incident" as const, id: sourceIncident?.id ?? null }
+              ? runtime.mode === "api"
+                ? { type: "risk" as const, id: sourceRisk.id }
+                : { type: "incident" as const, id: sourceIncident?.id ?? null }
               : { type: "manual" as const, id: null },
             target,
             categoryCode: values.categoryCode,
@@ -569,6 +581,7 @@ function RiskPanel({
   confirming,
   acknowledging,
   hasIncident,
+  linkedOrders,
   onConfirm,
   onAcknowledge,
   onCreate,
@@ -580,6 +593,7 @@ function RiskPanel({
   confirming: boolean;
   acknowledging: boolean;
   hasIncident: boolean;
+  linkedOrders: WorkOrder[];
   onConfirm: () => void;
   onAcknowledge: () => void;
   onCreate: () => void;
@@ -588,9 +602,18 @@ function RiskPanel({
     <section className="surface risk-panel">
       <header className="surface__header">
         <div>
-          <StatusBadge tone="forecast">Демонстрационный прогноз</StatusBadge>
+          <div className="inline-actions">
+            <StatusBadge tone="forecast">Прогноз ML</StatusBadge>
+            {risk.demoClock ? <StatusBadge tone="warning">Исторический ML-демо</StatusBadge> : null}
+          </div>
           <h2 style={{ marginTop: 8 }}>{risk.predictedEvent}</h2>
           <p className="page-header__meta">Горизонт прогноза: {risk.horizonHours} ч</p>
+          {risk.modelAsOf ? (
+            <p className="page-header__meta">
+              Модельный срез: {formatDateTime(risk.modelAsOf)}
+              {risk.demoClock ? ` · запрошено backend: ${formatDateTime(risk.demoClock.requestedAsOfUtc)}` : ""}
+            </p>
+          ) : null}
         </div>
         <div className="risk-score">
           <span className="risk-score__value">{formatPercent(risk.probability)}</span>
@@ -645,6 +668,23 @@ function RiskPanel({
             </li>
           ))}
         </ul>
+        {linkedOrders.length ? (
+          <div className="content-stack" aria-label="Связанные заявки">
+            {linkedOrders.map((order) => (
+              <InlineAlert
+                key={order.id}
+                tone={order.status === "closed" ? "success" : order.status === "cancelled" ? "warning" : "info"}
+                title={`Связанная заявка ${order.number}`}
+              >
+                <span>Статус: {statusLabels[order.status]}. </span>
+                <Link to={`/work-orders/${order.id}`}>Открыть заявку</Link>
+                {order.status === "closed" ? (
+                  <span> · Ремонт завершён, но решение по прогнозу остаётся отдельным действием диспетчера</span>
+                ) : null}
+              </InlineAlert>
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -679,7 +719,7 @@ function CreateWorkOrderModal({
       targetKey: risk ? `${risk.target.type}:${risk.target.id}` : initialTargetKey ?? `${facilityTarget.type}:${facilityTarget.id}`,
       description: risk?.recommendation ?? "",
       symptoms: risk?.predictedEvent ?? "",
-      categoryCode: risk ? "predictive_maintenance" : "manual_inspection",
+      categoryCode: risk ? "maintenance" : "inspection",
       preliminaryPriority: risk?.severity === "critical" ? "P1" : "P2",
     },
   });
@@ -691,7 +731,7 @@ function CreateWorkOrderModal({
       targetKey: risk ? `${risk.target.type}:${risk.target.id}` : initialTargetKey ?? `${facilityTarget.type}:${facilityTarget.id}`,
       description: risk?.recommendation ?? "",
       symptoms: risk?.predictedEvent ?? "",
-      categoryCode: risk ? "predictive_maintenance" : "manual_inspection",
+      categoryCode: risk ? "maintenance" : "inspection",
       preliminaryPriority: risk?.severity === "critical" ? "P1" : "P2",
     });
   }, [facilityTarget.id, facilityTarget.type, initialTargetKey, open, reset, risk, riskId]);
@@ -708,17 +748,24 @@ function CreateWorkOrderModal({
     .map((error) => error?.message)
     .filter(Boolean);
   const formId = "create-work-order-form";
+  const closeModal = () => {
+    if (createMutation.isPending) return;
+    createMutation.reset();
+    onClose();
+  };
 
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={closeModal}
       title="Новая заявка"
       description="Заявка будет привязана к конкретному оборудованию или датчику"
       size="large"
+      closeOnBackdrop={!createMutation.isPending}
+      closeOnEscape={!createMutation.isPending}
       footer={
         <div className="inline-actions" style={{ justifyContent: "flex-end", width: "100%" }}>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" disabled={createMutation.isPending} onClick={closeModal}>
             Отмена
           </Button>
           <Button
@@ -788,10 +835,10 @@ function CreateWorkOrderModal({
             aria-describedby={form.formState.errors.categoryCode ? "order-category-error" : undefined}
             {...form.register("categoryCode")}
           >
-            <option value="predictive_maintenance">Предиктивное обслуживание</option>
-            <option value="sensor_failure">Отказ датчика</option>
-            <option value="equipment_fault">Неисправность оборудования</option>
-            <option value="manual_inspection">Осмотр и диагностика</option>
+            <option value="inspection">Осмотр и диагностика</option>
+            <option value="repair">Ремонт оборудования</option>
+            <option value="replacement">Замена оборудования или датчика</option>
+            <option value="maintenance">Плановое или предиктивное обслуживание</option>
           </select>
           {form.formState.errors.categoryCode ? (
             <p className="field__error" id="order-category-error">{form.formState.errors.categoryCode.message}</p>
@@ -834,7 +881,21 @@ function CreateWorkOrderModal({
         </div>
         {createMutation.isError ? (
           <InlineAlert tone="critical" title="Заявку не удалось создать" className="field--full">
-            Данные формы сохранены. Повтори отправку после проверки соединения
+            <p>
+              {createMutation.error instanceof Error
+                ? createMutation.error.message
+                : "Backend не принял заявку"}. Данные формы сохранены
+            </p>
+            {createMutation.error instanceof RepositoryError && createMutation.error.fieldErrors.length ? (
+              <ul>
+                {createMutation.error.fieldErrors.map((item) => (
+                  <li key={`${item.field}:${item.code}`}>{item.message}</li>
+                ))}
+              </ul>
+            ) : null}
+            {createMutation.error instanceof RepositoryError ? (
+              <small>Trace ID: {createMutation.error.correlationId}</small>
+            ) : null}
           </InlineAlert>
         ) : null}
       </form>
@@ -915,11 +976,17 @@ function equipmentStatus(status: string) {
 
 function sensorTone(status: string) {
   if (status === "alarm") return "critical" as const;
-  if (status === "attention") return "warning" as const;
+  if (status === "attention" || status === "offline") return "warning" as const;
   if (status === "normal") return "success" as const;
   return "neutral" as const;
 }
 
 function sensorStatus(status: string) {
-  return { normal: "Норма", attention: "Внимание", alarm: "Тревога", offline: "Нет связи" }[status] ?? status;
+  return {
+    normal: "Норма",
+    attention: "Внимание",
+    alarm: "Тревога",
+    offline: "Нет связи",
+    unknown: "Состояние не рассчитано",
+  }[status] ?? status;
 }

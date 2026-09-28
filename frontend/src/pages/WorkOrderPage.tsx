@@ -11,7 +11,7 @@ import {
 } from "@phosphor-icons/react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { WorkOrderAction } from "../domain";
+import { RepositoryError, type WorkOrderAction } from "../domain";
 import { Button, InlineAlert, Modal, StatusBadge } from "../shared/ui";
 import { useAuditTimeline, useFacility, useWorkOrder } from "../app/dataHooks";
 import { useContour, useRepositoryCommandMeta } from "../app/ContourProvider";
@@ -29,16 +29,18 @@ type DialogAction = "return_for_rework" | "close" | "cancel" | "resubmit_clarifi
 export function WorkOrderPage() {
   const { workOrderId } = useParams();
   const navigate = useNavigate();
-  const { repository, runtime, currentUser, profiles, invalidateAll } = useContour();
+  const { repository, currentUser, profiles, invalidateAll } = useContour();
   const commandMeta = useRepositoryCommandMeta();
   const orderQuery = useWorkOrder(workOrderId);
   const facilityQuery = useFacility(orderQuery.data?.target.facilityId);
-  const auditQuery = useAuditTimeline("work_order", workOrderId);
+  const canReadAudit = currentUser.permissions.includes("audit.read");
+  const auditQuery = useAuditTimeline("work_order", workOrderId, canReadAudit);
   const [dialogAction, setDialogAction] = useState<DialogAction>(null);
   const [comment, setComment] = useState("");
   const [equipmentOperational, setEquipmentOperational] = useState<boolean | null>(null);
 
   const openDialog = (action: Exclude<DialogAction, null>) => {
+    actionMutation.reset();
     setComment("");
     setEquipmentOperational(null);
     setDialogAction(action);
@@ -113,15 +115,25 @@ export function WorkOrderPage() {
     },
   });
 
-  if (orderQuery.isPending || auditQuery.isPending) {
+  const refreshAfterMutationError = async () => {
+    await Promise.all([
+      orderQuery.refetch(),
+      canReadAudit ? auditQuery.refetch() : Promise.resolve(),
+    ]);
+    actionMutation.reset();
+  };
+
+  if (orderQuery.isPending || (canReadAudit && auditQuery.isPending)) {
     return <PageLoading label="Загружаем карточку заявки" />;
   }
-  if (orderQuery.isError || auditQuery.isError) {
+  if (orderQuery.isError || (canReadAudit && auditQuery.isError)) {
     return (
       <PageError
         title="Заявка недоступна"
         message="У текущей роли нет доступа, либо заявка была изменена"
-        onRetry={() => void Promise.all([orderQuery.refetch(), auditQuery.refetch()])}
+        onRetry={() => void (canReadAudit
+          ? Promise.all([orderQuery.refetch(), auditQuery.refetch()])
+          : orderQuery.refetch())}
       />
     );
   }
@@ -188,8 +200,13 @@ export function WorkOrderPage() {
       ) : null}
 
       {actionMutation.isError ? (
-        <InlineAlert tone="critical" title="Изменение не сохранено" style={{ marginTop: 12 }}>
-          Заявка могла измениться в другой роли. Введённый комментарий сохранён, обнови данные и повтори действие
+        <InlineAlert
+          tone="critical"
+          title="Изменение не сохранено"
+          style={{ marginTop: 12 }}
+          action={<Button variant="secondary" onClick={() => void refreshAfterMutationError()}>Обновить заявку</Button>}
+        >
+          <MutationErrorDetails error={actionMutation.error} />
         </InlineAlert>
       ) : null}
 
@@ -225,7 +242,7 @@ export function WorkOrderPage() {
                 <dt>Обновлена</dt>
                 <dd>{formatDateTime(order.updatedAt)}</dd>
               </dl>
-              <p className="provenance-note">Источник: синтетический демонстрационный сценарий Contour</p>
+              <p className="provenance-note">Источник: {order.provenance.sourceLabel}</p>
             </div>
           </section>
 
@@ -264,7 +281,12 @@ export function WorkOrderPage() {
               <h2>История заявки</h2>
             </header>
             <div className="surface__body">
-              <WorkOrderTimeline workOrder={order} events={auditQuery.data} />
+              <WorkOrderTimeline workOrder={order} events={auditQuery.data ?? []} />
+              {!canReadAudit ? (
+                <p className="provenance-note">
+                  Полный журнал доступен ролям с правом просмотра аудита. Здесь показан текущий статус заявки
+                </p>
+              ) : null}
             </div>
           </section>
         </div>
@@ -329,7 +351,7 @@ export function WorkOrderPage() {
                   Следующий шаг выполняет другая роль согласно процессу
                 </InlineAlert>
               ) : null}
-              {runtime.mode === "mock" && order.status !== "closed" && ["maintenance_coordinator", "manager"].includes(currentUser.role) ? (
+              {order.status !== "closed" && ["maintenance_coordinator", "manager"].includes(currentUser.role) ? (
                 <Link className="ui-button ui-button--secondary ui-button--medium ui-button--full-width" to={`/maintenance/queue?workOrder=${order.id}`}>
                   Открыть в ремонтной очереди
                   <ArrowRight size={18} />
@@ -393,12 +415,14 @@ export function WorkOrderPage() {
 
       <Modal
         open={Boolean(dialogAction)}
-        onClose={() => setDialogAction(null)}
+        onClose={() => !actionMutation.isPending && setDialogAction(null)}
         title={dialogTitle}
-        description="Решение будет добавлено в локальный журнал демо-заявки"
+        description="Решение будет сохранено в журнале заявки"
+        closeOnBackdrop={!actionMutation.isPending}
+        closeOnEscape={!actionMutation.isPending}
         footer={
           <div className="inline-actions" style={{ justifyContent: "flex-end", width: "100%" }}>
-            <Button variant="secondary" onClick={() => setDialogAction(null)}>
+            <Button variant="secondary" disabled={actionMutation.isPending} onClick={() => setDialogAction(null)}>
               Отмена
             </Button>
             <Button
@@ -412,6 +436,15 @@ export function WorkOrderPage() {
           </div>
         }
       >
+        {actionMutation.isError ? (
+          <InlineAlert
+            tone="critical"
+            title="Действие не выполнено"
+            action={<Button variant="secondary" onClick={() => void refreshAfterMutationError()}>Обновить данные</Button>}
+          >
+            <MutationErrorDetails error={actionMutation.error} />
+          </InlineAlert>
+        ) : null}
         {dialogAction === "override" ? (
           <InlineAlert tone="info" title="Действие сохраняет разделение ответственности">
             Решение руководителя попадёт в журнал заявки. Полевые этапы и отчёт о ремонте останутся за назначенным инженером
@@ -447,6 +480,29 @@ export function WorkOrderPage() {
   );
 }
 
+function MutationErrorDetails({ error }: { error: unknown }) {
+  const message = error instanceof Error ? error.message : "Backend не принял изменение";
+  const repositoryError = error instanceof RepositoryError ? error : null;
+  return (
+    <div>
+      <p>{message}. Введённые данные сохранены в форме</p>
+      {repositoryError?.fieldErrors.length ? (
+        <ul>
+          {repositoryError.fieldErrors.map((item) => (
+            <li key={`${item.field}:${item.code}`}>{item.message}</li>
+          ))}
+        </ul>
+      ) : null}
+      {repositoryError ? (
+        <details>
+          <summary>Технические детали</summary>
+          <small>Код: {repositoryError.code}, trace ID: {repositoryError.correlationId}</small>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 function backRoute(role: string) {
   if (role === "maintenance_coordinator") return "/maintenance/queue";
   if (role === "senior_dispatcher") return "/operations";
@@ -474,6 +530,10 @@ function slaLabel(state: string) {
 
 function categoryLabel(code: string) {
   return {
+    inspection: "Осмотр и диагностика",
+    repair: "Ремонт",
+    replacement: "Замена оборудования",
+    maintenance: "Обслуживание",
     predictive_maintenance: "Предиктивное обслуживание",
     sensor_failure: "Отказ датчика",
     equipment_fault: "Неисправность оборудования",

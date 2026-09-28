@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 COPY requirements.txt .
@@ -11,6 +14,8 @@ COPY alembic.ini ./alembic.ini
 COPY pytest.ini ./pytest.ini
 COPY tests ./tests
 COPY data ./data
+COPY scripts/concurrency-smoke.py ./scripts/concurrency-smoke.py
+COPY scripts/check-risk-provenance.py ./scripts/check-risk-provenance.py
 
 EXPOSE 8000
 

@@ -62,7 +62,14 @@ async def test_auth_schema_round_trip() -> None:
 
 
 def test_permissions_catalogue_is_nonempty() -> None:
-    assert len(PERMISSIONS) == 14
+    assert len(PERMISSIONS) >= 47
+    assert {
+        "work_order.triage",
+        "work_order.assign_engineer",
+        "work_order.submit_result",
+        "facility.dispatcher.assign",
+        "notification.read",
+    } <= PERMISSIONS
     assert "facility.read.all" in PERMISSIONS
     assert "system.manage" in PERMISSIONS
     assert "audit.read" in PERMISSIONS

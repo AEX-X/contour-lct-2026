@@ -8,9 +8,14 @@ from sqlalchemy import delete, select
 from src.db import async_session_factory
 from src.models.hierarchy import Facility
 from src.models.risk import Risk
-from src.services.object_risk_sync import ObjectRiskError, incident_risk_type, sync_object_risks
+from src.services.object_risk_sync import (
+    ObjectRiskError,
+    incident_risk_type,
+    sync_object_risks,
+)
 
 NOW = datetime(2037, 3, 1, tzinfo=timezone.utc)
+MODEL_ANCHOR = datetime(2026, 6, 20, tzinfo=timezone.utc)
 
 
 def _row(object_id: str, alert: bool, probability: float, suspects: list[dict], model: str = "hgb-object-test") -> dict:
@@ -45,7 +50,24 @@ def _ml_service(tag: str, calls: list[dict], status: int = 200) -> httpx.AsyncCl
         calls.append(body)
         if status != 200:
             return httpx.Response(status, text="boom")
-        return httpx.Response(200, json=maps[body["target"]])
+        requested = datetime.fromisoformat(body["as_of"])
+        effective_as_of = MODEL_ANCHOR + (requested - NOW)
+        selected = maps[body["target"]]
+        return httpx.Response(
+            200,
+            json={
+                **selected,
+                "as_of_utc": effective_as_of.isoformat(),
+                "demo_clock": {
+                    "requested_as_of_utc": requested.isoformat(),
+                    "anchor_utc": MODEL_ANCHOR.isoformat(),
+                },
+                "objects": [
+                    {**row, "as_of_utc": effective_as_of.isoformat()}
+                    for row in selected["objects"]
+                ],
+            },
+        )
 
     return httpx.AsyncClient(transport=httpx.MockTransport(handle), base_url="http://ml")
 
@@ -89,6 +111,15 @@ async def test_alerted_objects_become_facility_risks() -> None:
     smoke = risks[(f"fac_{tag}_smoke", "fire")]
     assert (smoke.target_type, smoke.facility_id, smoke.probability, smoke.horizon_hours) == ("facility", f"fac_{tag}_smoke", 0.9, 72.0)
     assert smoke.prediction_window_end - smoke.prediction_window_start == timedelta(hours=72)
+    assert smoke.as_of == MODEL_ANCHOR
+    assert smoke.prediction_window_start == MODEL_ANCHOR
+    assert smoke.data_health == "fresh"
+    assert smoke.sla_due_at == NOW + timedelta(hours=24)
+    assert smoke.created_at == NOW
+    assert smoke.demo_clock == {
+        "requested_as_of_utc": NOW.isoformat(),
+        "anchor_utc": MODEL_ANCHOR.isoformat(),
+    }
     assert smoke.top_factors == [f"factor of {tag}_smoke"]
     assert "sensor_1" in smoke.recommendation
     assert risks[(f"fac_{tag}_quiet", "sensor_failure")].horizon_hours == 168.0
@@ -105,6 +136,48 @@ async def test_second_sync_skips_objects_with_an_open_risk() -> None:
     async with _ml_service(tag, []) as client, async_session_factory() as session:
         assert await sync_object_risks(session, client, now=NOW + timedelta(hours=80)) == 2
     assert len(await _risks(tag)) == 5
+
+
+@pytest.mark.asyncio
+async def test_historical_object_clock_without_demo_metadata_is_not_fresh() -> None:
+    tag = "ors_historical"
+    await _seed_facilities(tag)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        objects = (
+            [
+                {
+                    **_row(f"{tag}_smoke", True, 0.9, []),
+                    "as_of_utc": MODEL_ANCHOR.isoformat(),
+                }
+            ]
+            if body["target"] == "incident"
+            else []
+        )
+        return httpx.Response(
+            200,
+            json={
+                "as_of_utc": MODEL_ANCHOR.isoformat(),
+                "horizon_hours": 72 if body["target"] == "incident" else 168,
+                "objects": objects,
+            },
+        )
+
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(handle), base_url="http://ml"
+        ) as client,
+        async_session_factory() as session,
+    ):
+        assert await sync_object_risks(session, client, now=NOW) == 1
+
+    [risk] = await _risks(tag)
+    assert risk.as_of == MODEL_ANCHOR
+    assert risk.demo_clock is None
+    assert risk.data_health != "fresh"
+    assert risk.prediction_window_start == MODEL_ANCHOR
+    assert risk.sla_due_at == NOW + timedelta(hours=24)
 
 
 @pytest.mark.asyncio

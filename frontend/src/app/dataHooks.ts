@@ -122,12 +122,16 @@ export function useNotifications() {
   });
 }
 
-export function useAuditTimeline(entityType: string, entityId: string | undefined) {
+export function useAuditTimeline(
+  entityType: string,
+  entityId: string | undefined,
+  enabled = true,
+) {
   const { repository, currentUser } = useContour();
   return useQuery({
     queryKey: contourKeys.audit(currentUser.id, entityType, entityId ?? "missing"),
     queryFn: () => repository.getAuditTimeline(entityType, entityId!),
-    enabled: Boolean(entityId),
+    enabled: enabled && Boolean(entityId),
   });
 }
 

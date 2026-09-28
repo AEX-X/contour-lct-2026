@@ -6,6 +6,7 @@ requires is real and stable, but the values are not yet computed from
 real sensor/risk data -- that lands with tickets 05 (sensor timeseries)
 and 08 (ML predictions / risks). This file owns only the shape.
 """
+
 from datetime import datetime
 from typing import Literal
 
@@ -45,6 +46,7 @@ class Assets(BaseModel):
     """Counts of the facility's owned equipment/sensors."""
 
     collector_count: int
+    equipment_count: int = 0
     sensor_count: int
     offline_sensor_count: int
 
@@ -71,8 +73,13 @@ class FacilityOut(BaseModel):
     """The complete facility representation, shared by list and detail."""
 
     id: str
+    version: int
+    responsible_dispatcher_id: str | None
     display_name: str
     facility_type: str
+    address: str | None = None
+    internal_code: str
+    rosta_code: str | None = None
     location: Location
     current_state: str
     forecast: Forecast

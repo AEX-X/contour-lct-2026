@@ -17,7 +17,10 @@ export type FacilityOperationalState = Facility['status'] | 'forecast'
 
 export function isRiskActiveAt(risk: RiskForecast, asOf: string): boolean {
   const expiresAt = Date.parse(risk.expiresAt)
-  const referenceTime = Date.parse(asOf)
+  // API forecasts may be calculated against an explicit historical model
+  // clock. Their window belongs to that analytical timeline, while work-order
+  // SLA continues to use the operational wall clock.
+  const referenceTime = Date.parse(risk.modelAsOf ?? asOf)
   return (
     !['rejected', 'deferred', 'resolved'].includes(risk.status) &&
     Number.isFinite(expiresAt) &&

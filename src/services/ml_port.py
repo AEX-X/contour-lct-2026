@@ -30,6 +30,14 @@ class PredictionInput:
 
 
 @dataclass(frozen=True)
+class DemoClock:
+    """Explicit historical clock metadata supplied by the ML service."""
+
+    requested_as_of_utc: datetime
+    anchor_utc: datetime
+
+
+@dataclass(frozen=True)
 class PredictionResult:
     """A predictor's forecast for one PredictionInput.
 
@@ -43,6 +51,9 @@ class PredictionResult:
         alert: Whether the model itself raised an alert for this target.
         model_threshold: The model's working threshold behind `alert`.
         horizon_hours: Forecast horizon; falls back to prediction_window_hours.
+        effective_as_of: Actual model snapshot time. It may differ from the
+            requested wall clock when the ML service runs historical replay.
+        demo_clock: Explicit historical-demo clock metadata, when supplied.
     """
 
     probability: float
@@ -54,6 +65,8 @@ class PredictionResult:
     alert: bool | None = None
     model_threshold: float | None = None
     horizon_hours: float | None = None
+    effective_as_of: datetime | None = None
+    demo_clock: DemoClock | None = None
 
 
 class MLPredictor(Protocol):

@@ -5,9 +5,10 @@ ids (plus the synthetic "unknown" id for orphaned channels) -- that
 module stays the single source of truth for numeric/categorical
 classification; this schema does not duplicate it.
 """
+
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base
@@ -34,14 +35,26 @@ class SensorChannel(Base):
     sensor_type_id: Mapped[str] = mapped_column(String)
     system_type: Mapped[str] = mapped_column(String)
     display_name: Mapped[str] = mapped_column(String)
-    facility_id: Mapped[str | None] = mapped_column(ForeignKey("facilities.id"), nullable=True)
-    hierarchy_node_id: Mapped[str | None] = mapped_column(ForeignKey("hierarchy_nodes.id"), nullable=True)
+    facility_id: Mapped[str | None] = mapped_column(
+        ForeignKey("facilities.id"), nullable=True
+    )
+    hierarchy_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("hierarchy_nodes.id"), nullable=True
+    )
 
 
 class SensorReading(Base):
     """One raw event-log row, normalized (see `src/services/event_parser.py`)."""
 
     __tablename__ = "sensor_readings"
+    __table_args__ = (
+        Index(
+            "ix_sensor_readings_channel_occurred_id",
+            "channel_id",
+            "occurred_at",
+            "id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     channel_id: Mapped[str] = mapped_column(String, index=True)
@@ -61,5 +74,7 @@ class EtlIngestedSource(Base):
     __tablename__ = "etl_ingested_sources"
 
     source_path: Mapped[str] = mapped_column(String, primary_key=True)
-    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
     row_count: Mapped[int] = mapped_column(Integer)

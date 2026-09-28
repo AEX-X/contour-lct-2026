@@ -1,53 +1,103 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: mkl
-      POSTGRES_PASSWORD: mkl
-      POSTGRES_DB: mkl
-    # No host port: the database is reachable only from the compose network.
+      POSTGRES_USER: ${POSTGRES_USER:-mkl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mkl}
+      POSTGRES_DB: ${POSTGRES_DB:-mkl}
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mkl"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
+      start_period: 10s
+    networks:
+      - backend
 
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
     environment:
-      DATABASE_URL: postgresql+asyncpg://mkl:mkl@db:5432/mkl
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mkl}:${POSTGRES_PASSWORD:-mkl}@db:5432/${POSTGRES_DB:-mkl}
       APP_ENV: docker
-      LOG_LEVEL: INFO
-      # ML Prediction Port. Unset -> built-in StubPredictor. A service running on the
-      # host machine is reached as http://host.docker.internal:<port>.
-      ML_PREDICTOR_URL: ${ML_PREDICTOR_URL:-}
-      # Browser origins of the frontend allowed to call the API (comma-separated).
-      # Defaults cover common local dev servers; set the real frontend URL for a deployment.
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173}
-    extra_hosts:
-      # Docker Desktop resolves this name itself; on Linux it needs the explicit gateway mapping.
-      - "host.docker.internal:host-gateway"
-    # No host port: all traffic goes through the TLS proxy.
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Base compose is the deliberately named lite mode. The full overlay
+      # replaces this value and waits for a healthy ML service.
+      # Lite must stay deterministic even when the host shell contains an
+      # unrelated ML_PREDICTOR_URL. The Full overlay replaces this value.
+      ML_PREDICTOR_URL: ""
+      REPLAY_SPEED_MULTIPLIER: ${REPLAY_SPEED_MULTIPLIER:-360.0}
+      REPLAY_TICK_SECONDS: ${REPLAY_TICK_SECONDS:-5.0}
+      SESSION_TTL_MINUTES: ${SESSION_TTL_MINUTES:-480}
+      LOGIN_MAX_FAILURES_PER_USERNAME: ${LOGIN_MAX_FAILURES_PER_USERNAME:-5}
+      LOGIN_MAX_FAILURES_PER_IP: ${LOGIN_MAX_FAILURES_PER_IP:-20}
+      LOGIN_FAILURE_WINDOW_SECONDS: ${LOGIN_FAILURE_WINDOW_SECONDS:-900}
+      # The production frontend uses a same-origin /api path. CORS is off by
+      # default; set this only for a separate development frontend.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
     expose:
       - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     depends_on:
       db:
         condition: service_healthy
+        restart: true
+    networks:
+      - backend
 
   proxy:
-    build: ./proxy
+    build:
+      context: .
+      dockerfile: proxy/Dockerfile
+      args:
+        VITE_CONTOUR_DATA_MODE: api
+        VITE_CONTOUR_API_BASE_URL: /api/v1
+        VITE_SHOW_DEMO_CREDENTIALS: ${VITE_SHOW_DEMO_CREDENTIALS:-true}
+    restart: unless-stopped
     environment:
       HTTPS_PORT: ${HTTPS_PORT:-8443}
+      # Prevent nginx's entrypoint from treating nginx runtime variables as
+      # environment placeholders while rendering the template.
+      NGINX_ENVSUBST_FILTER: ^(HTTPS_PORT)$
     ports:
-      - "${HTTPS_PORT:-8443}:443"
       - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
     volumes:
       - proxy_certs:/etc/nginx/certs
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/proxy-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     depends_on:
-      - app
+      app:
+        condition: service_healthy
+        restart: true
+    networks:
+      - edge
+      - backend
 
 volumes:
   db_data:
   proxy_certs:
+
+networks:
+  edge:
+  backend:
+    internal: true

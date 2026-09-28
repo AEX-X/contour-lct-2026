@@ -4,10 +4,11 @@ District/DistrictFacility double as the ticket-04 grouping entity (see
 `docs/adr/0007-leaf-rows-are-facilities-level2-are-districts.md`): the same
 table is seeded from the real facility catalogue, not a parallel structure.
 """
+
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.config import get_settings
@@ -37,10 +38,15 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String)
     display_name: Mapped[str] = mapped_column(String)
     role: Mapped[str] = mapped_column(String, default="")
+    organization_id: Mapped[str] = mapped_column(String, default="org_moscollector")
+    specialization_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    availability: Mapped[str] = mapped_column(String, default="available")
     timezone: Mapped[str] = mapped_column(String, default="Europe/Moscow")
     locale: Mapped[str] = mapped_column(String, default="ru")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
 
 
 class UserPermission(Base):
@@ -66,7 +72,9 @@ class DistrictFacility(Base):
 
     __tablename__ = "district_facilities"
 
-    district_id: Mapped[str] = mapped_column(ForeignKey("districts.id"), primary_key=True)
+    district_id: Mapped[str] = mapped_column(
+        ForeignKey("districts.id"), primary_key=True
+    )
     facility_id: Mapped[str] = mapped_column(String, primary_key=True)
 
 
@@ -76,7 +84,9 @@ class UserScope(Base):
     __tablename__ = "user_scope"
 
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
-    scope_type: Mapped[str] = mapped_column(String)  # "all_facilities" | "assigned_facilities"
+    scope_type: Mapped[str] = mapped_column(
+        String
+    )  # "all_facilities" | "assigned_facilities"
 
 
 class UserScopeFacility(Base):
@@ -94,7 +104,9 @@ class UserScopeDistrict(Base):
     __tablename__ = "user_scope_districts"
 
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
-    district_id: Mapped[str] = mapped_column(ForeignKey("districts.id"), primary_key=True)
+    district_id: Mapped[str] = mapped_column(
+        ForeignKey("districts.id"), primary_key=True
+    )
 
 
 class UserSession(Base):
@@ -104,6 +116,12 @@ class UserSession(Base):
 
     token: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_default_session_expiry)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_default_session_expiry
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )

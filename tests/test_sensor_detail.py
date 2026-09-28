@@ -1,16 +1,19 @@
 """Tests for GET /api/v1/sensors/{sensor_id}."""
+
 from datetime import datetime, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 
-from src.db import async_session_factory
+from src.db import async_session_factory, engine
 from src.main import app
+from src.models.hierarchy import HierarchyNode
 from src.models.sensor import SensorChannel, SensorReading
 from src.services.demo_seed import seed_demo_users
 from src.services.facility_seed import seed_facility_catalogue
 from src.services.sensor_channel_seed import seed_sensor_channel_catalogue
+from src.services.sensor_query import get_sensor_detail
 
 
 async def _seed_all() -> None:
@@ -48,7 +51,9 @@ async def _seed_test_channel(suffix: str, facility_id: str) -> str:
 async def _login(username: str, password: str) -> str:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/auth/login", json={"username": username, "password": password})
+        response = await client.post(
+            "/api/v1/auth/login", json={"username": username, "password": password}
+        )
     assert response.status_code == 200
     return response.json()["token"]
 
@@ -56,7 +61,9 @@ async def _login(username: str, password: str) -> str:
 async def _get_detail(token: str, sensor_id: str):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        return await client.get(f"/api/v1/sensors/{sensor_id}", headers={"Authorization": f"Bearer {token}"})
+        return await client.get(
+            f"/api/v1/sensors/{sensor_id}", headers={"Authorization": f"Bearer {token}"}
+        )
 
 
 @pytest.mark.asyncio
@@ -69,7 +76,13 @@ async def test_detail_returns_full_shape_for_in_scope_sensor() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["id"] == sensor_id
-    for field in ("hierarchy_path", "current_reading", "current_state", "data_health", "maintenance_state"):
+    for field in (
+        "hierarchy_path",
+        "current_reading",
+        "current_state",
+        "data_health",
+        "maintenance_state",
+    ):
         assert field in body
     assert body["current_reading"] is None  # no readings ingested in this test
 
@@ -79,7 +92,11 @@ async def test_detail_includes_the_latest_reading_when_one_exists() -> None:
     await _seed_all()
     sensor_id = await _seed_test_channel("2", "fac_5122")
     async with async_session_factory() as session:
-        channel = (await session.execute(select(SensorChannel).where(SensorChannel.id == sensor_id))).scalar_one()
+        channel = (
+            await session.execute(
+                select(SensorChannel).where(SensorChannel.id == sensor_id)
+            )
+        ).scalar_one()
         session.add(
             SensorReading(
                 channel_id=channel.channel_id,
@@ -96,6 +113,58 @@ async def test_detail_includes_the_latest_reading_when_one_exists() -> None:
     token = await _login("manager", "manager123")
     response = await _get_detail(token, sensor_id)
     assert response.json()["current_reading"]["numeric_value"] == 28.0
+
+
+@pytest.mark.asyncio
+async def test_detail_resolves_only_the_requested_sensor_ancestor_chain() -> None:
+    await _seed_all()
+    sensor_id = await _seed_test_channel("hierarchy_query", "fac_5122")
+    equipment_name = "Расчетная группа оборудования: тест"
+    sensor_name = "Датчик проверки пути"
+    async with async_session_factory() as session:
+        root = await session.get(HierarchyNode, "node_fac_5122")
+        channel = await session.get(SensorChannel, sensor_id)
+        session.add(
+            HierarchyNode(
+                id="node_equipment_path_names",
+                parent_id=root.id,
+                facility_id="fac_5122",
+                entity_type="equipment",
+                entity_id="equipment_path_names",
+                display_name=equipment_name,
+            )
+        )
+        session.add(
+            HierarchyNode(
+                id="node_sensor_path_names",
+                parent_id="node_equipment_path_names",
+                facility_id="fac_5122",
+                entity_type="sensor",
+                entity_id=sensor_id,
+                display_name=sensor_name,
+            )
+        )
+        channel.hierarchy_node_id = "node_sensor_path_names"
+        expected_path = [root.display_name, equipment_name, sensor_name]
+        await session.commit()
+    statements: list[str] = []
+
+    def record_statement(
+        _conn, _cursor, statement, _parameters, _context, _executemany
+    ):
+        if "hierarchy_nodes" in statement.lower():
+            statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", record_statement)
+    try:
+        async with async_session_factory() as session:
+            detail = await get_sensor_detail(session, sensor_id, None)
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", record_statement)
+
+    assert detail.hierarchy_path == expected_path
+    assert len(statements) == 1
+    assert "WITH RECURSIVE" in statements[0].upper()
 
 
 @pytest.mark.asyncio

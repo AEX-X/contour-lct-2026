@@ -17,7 +17,6 @@ from src.schemas.sensor_series import (
     MissingInterval,
     NumericPoint,
     NumericSeriesOut,
-    Threshold,
 )
 from src.services.reference_data import SENSOR_TYPES
 

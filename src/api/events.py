@@ -1,10 +1,11 @@
 """GET /api/v1/events -- scope-filtered, keyset-paginated event/incident journal."""
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 
 from src.db import async_session_factory
-from src.deps.auth import get_current_user
+from src.deps.auth import require_permission
 from src.errors import ApiError
 from src.models.auth import User
 from src.schemas.event import EventListEnvelope, EventListMeta, EventOut
@@ -19,7 +20,9 @@ def _parse_iso_datetime(raw: str, field_name: str) -> datetime:
     try:
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise ApiError(400, "VALIDATION_ERROR", f"{field_name} must be an ISO 8601 datetime") from exc
+        raise ApiError(
+            400, "VALIDATION_ERROR", f"{field_name} must be an ISO 8601 datetime"
+        ) from exc
 
 
 @router.get("/events", response_model=EventListEnvelope)
@@ -31,7 +34,7 @@ async def get_events(
     to: str | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission("facility.technical_context.read")),
 ) -> EventListEnvelope:
     """List events/incidents within the caller's scope.
 
@@ -54,7 +57,9 @@ async def get_events(
     async with async_session_factory() as session:
         await sync_events(session)
         scope = await resolve_scope(session, user.id)
-        allowed_ids = None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        allowed_ids = (
+            None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        )
 
         items, next_cursor, total = await list_events(
             session,
@@ -70,5 +75,9 @@ async def get_events(
 
     return EventListEnvelope(
         data=[EventOut.model_validate(item) for item in items],
-        meta=EventListMeta(next_cursor=next_cursor, total=total, generated_at=datetime.now(timezone.utc)),
+        meta=EventListMeta(
+            next_cursor=next_cursor,
+            total=total,
+            generated_at=datetime.now(timezone.utc),
+        ),
     )

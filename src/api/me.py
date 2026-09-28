@@ -1,4 +1,5 @@
 """GET /api/v1/me — the current user's role, permissions, scope, locale."""
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -20,7 +21,12 @@ class ScopeOut(BaseModel):
 class MeOut(BaseModel):
     """The current user's identity, permissions, scope, and locale."""
 
+    user_id: str
+    display_name: str
     role: str
+    organization_id: str
+    specialization_codes: list[str]
+    availability: str
     permissions: list[str]
     scope: ScopeOut
     timezone: str
@@ -43,7 +49,12 @@ async def get_me(user: User = Depends(get_current_user)) -> MeOut:
         permissions = await resolve_permissions(session, user.id)
 
     return MeOut(
+        user_id=user.id,
+        display_name=user.display_name,
         role=user.role,
+        organization_id=user.organization_id,
+        specialization_codes=user.specialization_codes or [],
+        availability=user.availability,
         permissions=permissions,
         scope=ScopeOut(**scope),
         timezone=user.timezone,

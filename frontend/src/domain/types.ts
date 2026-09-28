@@ -155,6 +155,7 @@ export interface Facility {
 }
 
 export type HierarchyNodeType =
+  | 'facility'
   | 'building'
   | 'collector'
   | 'section'
@@ -205,7 +206,7 @@ export type SensorKind =
   | 'contact'
   | 'volume'
 
-export type SensorStatus = 'normal' | 'attention' | 'alarm' | 'offline'
+export type SensorStatus = 'normal' | 'attention' | 'alarm' | 'offline' | 'unknown'
 
 export interface SensorReading {
   at: ISODateTime
@@ -224,10 +225,11 @@ export interface Sensor {
   unit: string
   status: SensorStatus
   lastReading: SensorReading | null
+  lastValueText?: string | null
   warningThreshold: number | null
   alarmThreshold: number | null
   readings: SensorReading[]
-  updatedAt: ISODateTime
+  updatedAt: ISODateTime | null
   provenance: DataProvenance
 }
 
@@ -278,6 +280,12 @@ export interface RiskForecast {
   status: RiskStatus
   topFactors: Array<{ label: string; contribution: number | null; direction: 'up' | 'down' }>
   recommendation: string
+  modelAsOf?: ISODateTime
+  demoClock?: {
+    requestedAsOfUtc: ISODateTime
+    anchorUtc: ISODateTime
+  } | null
+  dataHealth?: string
   createdAt: ISODateTime
   expiresAt: ISODateTime
   decidedAt: ISODateTime | null
@@ -499,7 +507,7 @@ export interface AuditEvent {
   entityId: string
   action: string
   actor: UserRef
-  actorRole: DemoRole
+  actorRole: DemoRole | null
   occurredAt: ISODateTime
   reason: string | null
   beforeVersion: number | null

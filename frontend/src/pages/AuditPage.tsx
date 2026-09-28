@@ -16,6 +16,23 @@ export function AuditPage() {
 
   if (ordersQuery.isPending) return <PageLoading label="Загружаем журнал аудита" />;
   if (ordersQuery.isError) return <PageError onRetry={() => void ordersQuery.refetch()} />;
+  if (!ordersQuery.data.length || !entityId) {
+    return (
+      <div className="page">
+        <header className="page-header">
+          <div>
+            <h1>Журнал аудита</h1>
+            <p className="page-header__meta">История действий по заявкам</p>
+          </div>
+          <StatusBadge tone="info" icon={ShieldCheck}>Журнал готов</StatusBadge>
+        </header>
+        <EmptyState
+          title="Заявок пока нет"
+          description="События аудита появятся после создания первой заявки"
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="page">

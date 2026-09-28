@@ -36,18 +36,20 @@ def risk_level_for_probability(probability: float) -> tuple[str, float]:
     return last.id, last.min_probability
 
 
-def sla_due_at_for_risk_level(risk_level: str, as_of: datetime) -> datetime:
+def sla_due_at_for_risk_level(
+    risk_level: str, operational_at: datetime
+) -> datetime:
     """Compute the SLA deadline for a risk level, reusing SLA_PARAMS.
 
     Args:
         risk_level: A RISK_LEVELS id.
-        as_of: The forecast's snapshot time.
+        operational_at: Wall-clock time when backend accepted the forecast.
 
     Returns:
-        as_of + that risk level's documented response_minutes.
+        operational_at + that risk level's documented response_minutes.
     """
     param = next(p for p in SLA_PARAMS if p.risk_level == risk_level)
-    return as_of + timedelta(minutes=param.response_minutes)
+    return operational_at + timedelta(minutes=param.response_minutes)
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,7 @@ class RiskAssessment:
 
 def assess_forecast(
     probability: float,
-    as_of: datetime,
+    operational_at: datetime,
     *,
     alert: bool | None,
     horizon_hours: float,
@@ -80,7 +82,8 @@ def assess_forecast(
 
     Args:
         probability: The forecast probability in [0, 1].
-        as_of: The forecast's snapshot time.
+        operational_at: Wall-clock time when backend accepted the forecast.
+            This deliberately stays separate from a historical model as_of.
         alert: The model's alert flag, or None if the model does not send one.
         horizon_hours: The forecast horizon (used by the model-alert rule).
         model_threshold: The model's working threshold, if known.
@@ -90,7 +93,11 @@ def assess_forecast(
     """
     if alert is None:
         risk_level, threshold = risk_level_for_probability(probability)
-        return RiskAssessment(risk_level, threshold, sla_due_at_for_risk_level(risk_level, as_of))
+        return RiskAssessment(
+            risk_level,
+            threshold,
+            sla_due_at_for_risk_level(risk_level, operational_at),
+        )
     if not alert:
         return None
 
@@ -99,16 +106,24 @@ def assess_forecast(
     else:
         # Нижняя граница «Среднего» — сама тревога модели, то есть её порог.
         risk_level, threshold = "medium", model_threshold if model_threshold is not None else 0.0
-    sla_due_at = as_of + timedelta(hours=horizon_hours * MODEL_ALERT_SLA_HORIZON_FRACTION)
+    sla_due_at = operational_at + timedelta(
+        hours=horizon_hours * MODEL_ALERT_SLA_HORIZON_FRACTION
+    )
     return RiskAssessment(risk_level, threshold, sla_due_at)
 
 
-def compute_priority_score(probability: float, as_of: datetime, sla_due_at: datetime, *, now: datetime | None = None) -> float:
+def compute_priority_score(
+    probability: float,
+    operational_started_at: datetime,
+    sla_due_at: datetime,
+    *,
+    now: datetime | None = None,
+) -> float:
     """Compute a ranking score independent of probability alone.
 
     Args:
         probability: The forecast's probability.
-        as_of: The forecast's snapshot time.
+        operational_started_at: Wall-clock time when SLA tracking started.
         sla_due_at: The SLA deadline for this forecast's risk level.
         now: Wall-clock time to evaluate urgency against (tests pass an
             explicit value; production uses real UTC now).
@@ -119,8 +134,8 @@ def compute_priority_score(probability: float, as_of: datetime, sla_due_at: date
         probability but different SLA urgency rank differently.
     """
     now = now or datetime.now(timezone.utc)
-    total_seconds = (sla_due_at - as_of).total_seconds()
-    elapsed_seconds = (now - as_of).total_seconds()
+    total_seconds = (sla_due_at - operational_started_at).total_seconds()
+    elapsed_seconds = (now - operational_started_at).total_seconds()
     urgency = 0.0 if total_seconds <= 0 else max(0.0, min(1.0, elapsed_seconds / total_seconds))
     return round(probability * _PROBABILITY_WEIGHT + urgency * _URGENCY_WEIGHT, 2)
 

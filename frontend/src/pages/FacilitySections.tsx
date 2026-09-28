@@ -149,7 +149,9 @@ export function FacilityPlanSection({
                       <strong>{node.value.name}</strong>
                       <small className="muted">
                         {node.type === "sensor"
-                          ? `${node.value.lastReading?.value ?? "Нет данных"} ${node.value.unit}`
+                          ? node.value.lastReading
+                            ? `${node.value.lastReading.value}${node.value.unit ? ` ${node.value.unit}` : ""}`
+                            : node.value.lastValueText ?? "Нет данных"
                           : node.value.model ?? "Модель не указана"}
                       </small>
                     </span>
@@ -204,7 +206,7 @@ function AssetDetailsModal({
   onCreate: () => void;
 }) {
   if (!asset) return null;
-  const node = hierarchy.find((item) => item.id === asset.value.hierarchyNodeId);
+  const hierarchyDescription = resolveHierarchyDescription(asset, hierarchy);
   const relatedOrders = orders.filter((order) =>
     order.target.id === asset.value.id || order.affectedTargets.some((target) => target.id === asset.value.id),
   );
@@ -217,7 +219,7 @@ function AssetDetailsModal({
       open
       onClose={onClose}
       title={asset.value.name}
-      description={node?.path.join(" / ") ?? "Расположение в иерархии не указано"}
+      description={hierarchyDescription}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Закрыть</Button>
@@ -242,12 +244,12 @@ function AssetDetailsModal({
             </>
           ) : (
             <>
-              <dt>Текущее показание</dt><dd>{asset.value.lastReading ? `${asset.value.lastReading.value} ${asset.value.unit}` : "Нет данных"}</dd>
+              <dt>Текущее показание</dt><dd>{asset.value.lastReading ? `${asset.value.lastReading.value}${asset.value.unit ? ` ${asset.value.unit}` : ""}` : asset.value.lastValueText ?? "Нет данных"}</dd>
               <dt>Порог внимания</dt><dd>{asset.value.warningThreshold === null ? "Не задан" : `${asset.value.warningThreshold} ${asset.value.unit}`}</dd>
               <dt>Аварийный порог</dt><dd>{asset.value.alarmThreshold === null ? "Не задан" : `${asset.value.alarmThreshold} ${asset.value.unit}`}</dd>
-              <dt>Качество данных</dt><dd>{asset.value.lastReading ? readingQuality(asset.value.lastReading.quality) : "Нет данных"}</dd>
+              <dt>Качество данных</dt><dd>{asset.value.lastReading ? readingQuality(asset.value.lastReading.quality) : asset.value.lastValueText ? "Категориальное значение" : "Нет данных"}</dd>
               <dt>Связано с</dt><dd>{linkedEquipment?.name ?? "Самостоятельный датчик"}</dd>
-              <dt>Обновлено</dt><dd>{formatDateTime(asset.value.updatedAt)}</dd>
+              <dt>Последнее показание</dt><dd>{asset.value.updatedAt ? formatDateTime(asset.value.updatedAt) : "Не поступало"}</dd>
             </>
           )}
         </dl>
@@ -273,7 +275,7 @@ function AssetDetailsModal({
 
 export function FacilityAnalyticsSection({ facility, sensors, risks, orders, asOf = "" }: FacilitySectionProps) {
   const activeRisks = risks.filter((risk) => isRiskActiveAt(risk, asOf));
-  const troubledSensors = sensors.filter((sensor) => sensor.status !== "normal");
+  const troubledSensors = sensors.filter((sensor) => ["alarm", "attention", "offline"].includes(sensor.status));
   const openOrders = orders.filter((order) => !["draft", "closed", "cancelled"].includes(order.status));
   const slaAtRisk = openOrders.filter((order) => order.sla && ["at_risk", "breached"].includes(order.sla.state));
   const telemetryGroups = sensors
@@ -297,7 +299,7 @@ export function FacilityAnalyticsSection({ facility, sensors, risks, orders, asO
   return (
     <div className="content-stack">
       <section className="analytics-kpi-grid" aria-label="Аналитика объекта">
-        <article className="metric-card"><span>Доступность телеметрии</span><strong>{facility.sensorAvailability === null ? "Нет данных" : formatPercent(facility.sensorAvailability)}</strong><small>агрегированный показатель СМВУ</small></article>
+        <article className="metric-card"><span>Покрытие последними показаниями</span><strong>{facility.sensorAvailability === null ? "Нет данных" : formatPercent(facility.sensorAvailability)}</strong><small>доля датчиков с сохранённым показанием, не свежесть потока</small></article>
         <article className="metric-card"><span>Активные риски</span><strong>{activeRisks.length}</strong><small>{activeRisks.filter((risk) => risk.severity === "critical").length} критических</small></article>
         <article className="metric-card"><span>Датчики с отклонениями</span><strong>{troubledSensors.length}</strong><small>из {sensors.length || "не загружено"}</small></article>
         <article className="metric-card"><span>SLA требует внимания</span><strong>{slaAtRisk.length}</strong><small>из {openOrders.length} {pluralizeRu(openOrders.length, ["открытой заявки", "открытых заявок", "открытых заявок"])}</small></article>
@@ -307,7 +309,7 @@ export function FacilityAnalyticsSection({ facility, sensors, risks, orders, asO
         <header className="surface__header">
           <div>
             <h2 id="telemetry-trend-title">Последние показания</h2>
-            <p className="page-header__meta">Отдельная шкала для каждого датчика и единицы измерения</p>
+            <p className="page-header__meta">До 12 числовых рядов за 7 дней, отдельная шкала для каждого датчика</p>
           </div>
           <ChartLineUp size={24} aria-hidden="true" />
         </header>
@@ -404,13 +406,40 @@ function readingQuality(value: Sensor["lastReading"] extends infer _ ? "good" | 
 }
 
 function sensorStatus(status: Sensor["status"]) {
-  return { normal: "Норма", attention: "Внимание", alarm: "Тревога", offline: "Нет связи" }[status];
+  return {
+    normal: "Норма",
+    attention: "Внимание",
+    alarm: "Тревога",
+    offline: "Нет связи",
+    unknown: "Состояние не рассчитано",
+  }[status];
 }
 
 function sensorTone(status: Sensor["status"]) {
   if (status === "alarm") return "critical" as const;
   if (status === "attention" || status === "offline") return "warning" as const;
-  return "success" as const;
+  if (status === "normal") return "success" as const;
+  return "neutral" as const;
+}
+
+function resolveHierarchyDescription(asset: InspectableAsset, hierarchy: HierarchyNode[]) {
+  const hierarchyById = new Map(hierarchy.map((item) => [item.id, item]));
+  const node = hierarchyById.get(asset.value.hierarchyNodeId);
+  const mappedPath = node?.path.map((item) => hierarchyById.get(item)?.displayName ?? item) ?? [];
+
+  if (mappedPath.length && !mappedPath.some((item) => /^node(?:_|-|$)/i.test(item))) {
+    return mappedPath.join(" / ");
+  }
+
+  const parentPath: string[] = [];
+  const visited = new Set<string>();
+  let current = node;
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    parentPath.unshift(current.displayName);
+    current = current.parentId ? hierarchyById.get(current.parentId) : undefined;
+  }
+  return parentPath.length ? parentPath.join(" / ") : "Расположение в иерархии не указано";
 }
 
 function equipmentStatus(status: Equipment["status"]) {

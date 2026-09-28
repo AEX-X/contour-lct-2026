@@ -7,10 +7,11 @@ this implementation requires no backend code change (see
 `ml_predictor_factory.py`).
 """
 import math
+from datetime import datetime, timezone
 
 import httpx
 
-from src.services.ml_port import PredictionInput, PredictionResult
+from src.services.ml_port import DemoClock, PredictionInput, PredictionResult
 
 
 class MLPredictorError(Exception):
@@ -49,6 +50,33 @@ def parse_model_alert_fields(data: dict) -> tuple[bool | None, float | None, flo
     if horizon_hours is not None and horizon_hours <= 0:
         raise ValueError(f"horizon_hours must be positive, got {horizon_hours!r}")
     return alert, model_threshold, horizon_hours
+
+
+def parse_ml_datetime(value: object, field_name: str) -> datetime:
+    """Parse an ML timestamp and normalize naive service values to UTC."""
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be an ISO 8601 string")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an ISO 8601 datetime") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def parse_demo_clock(value: object) -> DemoClock | None:
+    """Validate optional historical-demo clock metadata from the ML service."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError("demo_clock must be an object or null")
+    return DemoClock(
+        requested_as_of_utc=parse_ml_datetime(
+            value.get("requested_as_of_utc"), "demo_clock.requested_as_of_utc"
+        ),
+        anchor_utc=parse_ml_datetime(value.get("anchor_utc"), "demo_clock.anchor_utc"),
+    )
 
 
 class HttpMLPredictor:
@@ -95,6 +123,12 @@ class HttpMLPredictor:
         try:
             data = response.json()
             alert, model_threshold, horizon_hours = parse_model_alert_fields(data)
+            effective_as_of = (
+                parse_ml_datetime(data["as_of_utc"], "as_of_utc")
+                if data.get("as_of_utc") is not None
+                else None
+            )
+            demo_clock = parse_demo_clock(data.get("demo_clock"))
             return PredictionResult(
                 probability=float(data["probability"]),
                 lead_min_hours=float(data["lead_min_hours"]),
@@ -105,6 +139,8 @@ class HttpMLPredictor:
                 alert=alert,
                 model_threshold=model_threshold,
                 horizon_hours=horizon_hours,
+                effective_as_of=effective_as_of,
+                demo_clock=demo_clock,
             )
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise MLPredictorError(f"malformed ML predictor response: {response.text}") from exc

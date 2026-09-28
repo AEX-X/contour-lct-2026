@@ -38,12 +38,6 @@ function RoleGuard({ roles, children }: { roles: DemoRole[]; children: ReactNode
   return <Navigate to="/access-denied" replace />;
 }
 
-function DemoWorkflowGuard({ children }: { children: ReactNode }) {
-  const { runtime } = useContour();
-  if (runtime.mode === "mock") return children;
-  return <Navigate to="/access-denied" replace />;
-}
-
 type FacilitySection = "overview" | "plan" | "analytics" | "orders" | "risks";
 
 function FacilityGuard({ section = "overview" }: { section?: FacilitySection }) {
@@ -173,7 +167,7 @@ export function App() {
           path="/maintenance/queue"
           element={
             <RoleGuard roles={["manager", "maintenance_coordinator"]}>
-              <DemoWorkflowGuard><MaintenanceRoute /></DemoWorkflowGuard>
+              <MaintenanceRoute />
             </RoleGuard>
           }
         />
@@ -181,7 +175,7 @@ export function App() {
           path="/maintenance/engineers"
           element={
             <RoleGuard roles={["manager", "maintenance_coordinator"]}>
-              <DemoWorkflowGuard><EngineersPage /></DemoWorkflowGuard>
+              <EngineersPage />
             </RoleGuard>
           }
         />
@@ -189,7 +183,7 @@ export function App() {
           path="/my-work"
           element={
             <RoleGuard roles={["engineer"]}>
-              <DemoWorkflowGuard><EngineerRoute /></DemoWorkflowGuard>
+              <EngineerRoute />
             </RoleGuard>
           }
         />
@@ -197,7 +191,7 @@ export function App() {
           path="/my-work/sync"
           element={
             <RoleGuard roles={["engineer"]}>
-              <DemoWorkflowGuard><EngineerRoute /></DemoWorkflowGuard>
+              <EngineerRoute />
             </RoleGuard>
           }
         />
@@ -205,7 +199,7 @@ export function App() {
           path="/my-work/:workOrderId"
           element={
             <RoleGuard roles={["engineer"]}>
-              <DemoWorkflowGuard><EngineerRoute /></DemoWorkflowGuard>
+              <EngineerRoute />
             </RoleGuard>
           }
         />
@@ -213,7 +207,7 @@ export function App() {
           path="/my-work/:workOrderId/result"
           element={
             <RoleGuard roles={["engineer"]}>
-              <DemoWorkflowGuard><EngineerRoute /></DemoWorkflowGuard>
+              <EngineerRoute />
             </RoleGuard>
           }
         />

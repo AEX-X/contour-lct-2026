@@ -107,7 +107,7 @@ async def test_facility_status_and_work_type_filters_narrow_correctly() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stale_draft_shows_auto_advanced_status_on_read() -> None:
+async def test_stale_draft_never_auto_advances_on_read() -> None:
     await _seed_all()
     old_created_at = datetime.now(timezone.utc) - timedelta(hours=3)
     await _insert("wo_list_stale_draft", "fac_5122", old_created_at, status="draft")
@@ -115,7 +115,7 @@ async def test_stale_draft_shows_auto_advanced_status_on_read() -> None:
     token = await _login("manager", "manager123")
     response = await _get(token, facility_id="fac_5122")
     item = next(wo for wo in response.json()["data"] if wo["id"] == "wo_list_stale_draft")
-    assert item["status"] == "completed"  # 3 hours >> the 110-minute completion threshold
+    assert item["status"] == "draft"
 
 
 @pytest.mark.asyncio

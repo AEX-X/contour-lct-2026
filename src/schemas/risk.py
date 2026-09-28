@@ -1,4 +1,5 @@
 """Pydantic response models for GET /api/v1/risks[...] (ticket 08)."""
+
 from datetime import datetime
 
 from pydantic import BaseModel
@@ -19,6 +20,13 @@ class PredictionWindow(BaseModel):
     end: datetime
 
 
+class DemoClockOut(BaseModel):
+    """Historical model clock declared by the ML service."""
+
+    requested_as_of_utc: datetime
+    anchor_utc: datetime
+
+
 class RiskOut(BaseModel):
     """The full risk forecast card."""
 
@@ -27,6 +35,8 @@ class RiskOut(BaseModel):
     risk_type: str
     target: RiskTarget
     as_of: datetime
+    demo_clock: DemoClockOut | None = None
+    is_invalidated: bool
     lead_min_hours: float
     horizon_hours: float
     prediction_window: PredictionWindow

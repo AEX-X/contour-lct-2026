@@ -58,7 +58,7 @@ export default defineConfig(({ mode }) => {
       manifest: {
         name: "Contour: инженерная инфраструктура",
         short_name: "Contour",
-        description: "Демонстрационный центр управления инженерной инфраструктурой",
+        description: "Центр управления инженерной инфраструктурой",
         lang: "ru",
         start_url: "/",
         scope: "/",
@@ -92,6 +92,12 @@ export default defineConfig(({ mode }) => {
       },
       workbox: {
         navigateFallback: "/index.html",
+        navigateFallbackDenylist: [
+          /^\/api(?:\/|$)/,
+          /^\/docs(?:\/|$)/,
+          /^\/openapi\.json$/,
+          /^\/health$/,
+        ],
         globPatterns: ["**/*.{js,css,html,png,svg,ico,woff,woff2,json}"],
         globIgnores: [
           "assets/pwa-64x64.png",

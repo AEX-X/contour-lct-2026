@@ -176,5 +176,14 @@ function slaLabel(state: string) {
 }
 
 function categoryLabel(code: string) {
-  return { predictive_maintenance: "Предиктивное ТО", sensor_failure: "Отказ датчика", equipment_fault: "Оборудование", manual_inspection: "Осмотр" }[code] ?? code;
+  return {
+    inspection: "Осмотр и диагностика",
+    repair: "Ремонт",
+    replacement: "Замена оборудования",
+    maintenance: "Обслуживание",
+    predictive_maintenance: "Предиктивное ТО",
+    sensor_failure: "Отказ датчика",
+    equipment_fault: "Оборудование",
+    manual_inspection: "Осмотр",
+  }[code] ?? code;
 }

@@ -1,4 +1,5 @@
 """Tests for structured errors and the auth enforcement dependencies."""
+
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -8,7 +9,7 @@ from src.db import async_session_factory
 from src.deps.auth import get_current_user, require_permission
 from src.errors import ApiError, register_exception_handlers
 from src.main import app
-from src.models.auth import User
+from src.models.auth import User, UserScope
 from src.services.auth_service import create_session, revoke_session
 from src.services.demo_seed import seed_demo_users
 
@@ -18,7 +19,9 @@ async def _seed_and_login(username: str, password: str) -> str:
         await seed_demo_users(session)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/auth/login", json={"username": username, "password": password})
+        response = await client.post(
+            "/api/v1/auth/login", json={"username": username, "password": password}
+        )
     assert response.status_code == 200
     return response.json()["token"]
 
@@ -62,11 +65,51 @@ async def test_require_permission_rejects_user_without_it() -> None:
             await session.execute(select(User).where(User.username == "dispatcher"))
         ).scalar_one()
 
-    dependency = require_permission("report.export")  # dispatcher does not have this one
+    dependency = require_permission(
+        "system.manage"
+    )  # dispatcher does not have this one
     with pytest.raises(ApiError) as exc_info:
         await dependency(user=dispatcher)
     assert exc_info.value.status_code == 403
     assert exc_info.value.code == "PERMISSION_DENIED"
+
+
+@pytest.mark.asyncio
+async def test_technical_read_endpoints_require_capability_in_addition_to_scope() -> (
+    None
+):
+    async with async_session_factory() as session:
+        user = User(
+            id="usr_scope_without_read_capability",
+            username="scope_without_read_capability",
+            password_hash="irrelevant",
+            display_name="Scope only",
+            role="test",
+        )
+        session.add(user)
+        session.add(UserScope(user_id=user.id, scope_type="all_facilities"))
+        await session.commit()
+        token = await create_session(session, user.id)
+
+    paths = (
+        "/api/v1/facilities",
+        "/api/v1/facilities/fac_5122",
+        "/api/v1/facilities/fac_5122/hierarchy",
+        "/api/v1/facilities/fac_5122/layout",
+        "/api/v1/sensors",
+        "/api/v1/sensors/missing",
+        "/api/v1/sensors/missing/series",
+        "/api/v1/events",
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        for path in paths:
+            response = await client.get(
+                path, headers={"Authorization": f"Bearer {token}"}
+            )
+            assert response.status_code == 403, (path, response.text)
+            assert response.json()["error"]["code"] == "PERMISSION_DENIED"
 
 
 @pytest.mark.asyncio
@@ -93,7 +136,9 @@ async def test_role_not_configured_returns_422() -> None:
 async def test_structured_error_envelope_shape_on_real_endpoint() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/auth/login", json={"username": "manager", "password": "wrong"})
+        response = await client.post(
+            "/api/v1/auth/login", json={"username": "manager", "password": "wrong"}
+        )
     assert response.status_code == 401
     body = response.json()
     assert set(body.keys()) == {"error"}
@@ -110,7 +155,9 @@ async def test_structured_error_envelope_for_api_error_directly() -> None:
 
     @probe_app.get("/_probe")
     async def _probe() -> None:
-        raise ApiError(403, "PERMISSION_DENIED", "no access", details={"needed": "report.export"})
+        raise ApiError(
+            403, "PERMISSION_DENIED", "no access", details={"needed": "report.export"}
+        )
 
     transport = ASGITransport(app=probe_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

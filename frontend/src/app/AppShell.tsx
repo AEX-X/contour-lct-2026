@@ -128,9 +128,10 @@ function ProfileMenu() {
     setPendingAction("sign-out");
     setMenuError(null);
     try {
-      await signOut();
+      const signedOut = await signOut();
+      if (!signedOut) setPendingAction(null);
     } catch {
-      setMenuError("Не удалось завершить backend-сессию. Обнови страницу и повтори попытку");
+      setMenuError("Не удалось безопасно завершить сеанс. Локальные данные не удалены");
       setPendingAction(null);
     }
   }
@@ -256,10 +257,8 @@ function ProfileMenu() {
 }
 
 function SideNavigation() {
-  const { currentUser, runtime } = useContour();
-  const items = navigationByRole[currentUser.role].filter(
-    (item) => runtime.mode !== "api" || !["/maintenance/queue", "/notifications"].includes(item.to),
-  );
+  const { currentUser } = useContour();
+  const items = navigationByRole[currentUser.role];
   return (
     <aside className="side-navigation">
       <Brand />
@@ -367,16 +366,14 @@ function AppHeader() {
           <br />{snapshotTime}
         </span>
       </div>
-      {runtime.mode === "mock" ? (
-        <NavLink
-          className="icon-button app-header__desktop-only"
-          to="/notifications"
-          aria-label={`Уведомления: ${unreadCount} непрочитанных`}
-        >
-          <Bell size={21} aria-hidden="true" />
-          {unreadCount ? <span className="notification-count">{unreadCount}</span> : null}
-        </NavLink>
-      ) : null}
+      <NavLink
+        className="icon-button app-header__desktop-only"
+        to="/notifications"
+        aria-label={`Уведомления: ${unreadCount} непрочитанных`}
+      >
+        <Bell size={21} aria-hidden="true" />
+        {unreadCount ? <span className="notification-count">{unreadCount}</span> : null}
+      </NavLink>
       <ProfileMenu />
     </header>
   );
@@ -384,12 +381,9 @@ function AppHeader() {
 
 function MobileNavigation({ role }: { role: DemoRole }) {
   const location = useLocation();
-  const { runtime } = useContour();
   const detailsRef = useRef<HTMLDetailsElement>(null);
-  const items: NavigationItem[] = navigationByRole[role].filter(
-    (item) => runtime.mode !== "api" || !["/maintenance/queue", "/notifications"].includes(item.to),
-  );
-  if (runtime.mode === "mock" && !items.some((item) => item.to === "/notifications")) {
+  const items: NavigationItem[] = [...navigationByRole[role]];
+  if (!items.some((item) => item.to === "/notifications")) {
     items.push({ to: "/notifications", label: "Уведомления", icon: Bell });
   }
   items.push({ to: "/settings", label: "Настройки", icon: GearSix });

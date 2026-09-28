@@ -1,4 +1,5 @@
 """The audit middleware journals every mutating API request (TZ section 11)."""
+
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -27,7 +28,9 @@ async def _seed_all() -> None:
         await seed_demo_users(session)
 
 
-async def _call(method: str, path: str, *, token: str | None = None, json: dict | None = None):
+async def _call(
+    method: str, path: str, *, token: str | None = None, json: dict | None = None
+):
     transport = ASGITransport(app=app, client=(_CLIENT_IP, 50000))
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -35,7 +38,9 @@ async def _call(method: str, path: str, *, token: str | None = None, json: dict 
 
 
 async def _login(username: str, password: str) -> str:
-    response = await _call("POST", "/api/v1/auth/login", json={"username": username, "password": password})
+    response = await _call(
+        "POST", "/api/v1/auth/login", json={"username": username, "password": password}
+    )
     assert response.status_code == 200, response.text
     return response.json()["token"]
 
@@ -44,7 +49,13 @@ async def _entries_for(response) -> list[AuditLogEntry]:
     trace_id = response.headers["X-Trace-Id"]
     async with async_session_factory() as session:
         return list(
-            (await session.execute(select(AuditLogEntry).where(AuditLogEntry.trace_id == trace_id))).scalars().all()
+            (
+                await session.execute(
+                    select(AuditLogEntry).where(AuditLogEntry.trace_id == trace_id)
+                )
+            )
+            .scalars()
+            .all()
         )
 
 
@@ -59,15 +70,30 @@ async def _add_risk(risk_id: str) -> None:
     async with async_session_factory() as session:
         session.add(
             Risk(
-                id=risk_id, forecast_id=risk_id, risk_type="fire", target_type="sensor",
-                target_id=f"sensor_{risk_id}", facility_id="fac_5122", as_of=as_of,
-                lead_min_hours=2.0, horizon_hours=6.0,
+                id=risk_id,
+                forecast_id=risk_id,
+                risk_type="fire",
+                target_type="sensor",
+                target_id=f"sensor_{risk_id}",
+                facility_id="fac_5122",
+                as_of=as_of,
+                lead_min_hours=2.0,
+                horizon_hours=6.0,
                 prediction_window_start=as_of + timedelta(hours=2),
                 prediction_window_end=as_of + timedelta(hours=8),
-                probability=0.6, threshold=0.3, risk_level="high", priority_score=50.0,
-                decision_status="open", sla_due_at=as_of + timedelta(hours=1), data_health="fresh",
-                model="test", top_factors=["f"], recommendation="r", version=1,
-                created_at=as_of, updated_at=as_of,
+                probability=0.6,
+                threshold=0.3,
+                risk_level="high",
+                priority_score=50.0,
+                decision_status="open",
+                sla_due_at=as_of + timedelta(hours=1),
+                data_health="fresh",
+                model="test",
+                top_factors=["f"],
+                recommendation="r",
+                version=1,
+                created_at=as_of,
+                updated_at=as_of,
             )
         )
         await session.commit()
@@ -77,7 +103,9 @@ async def _add_risk(risk_id: str) -> None:
 async def test_failed_login_is_journaled_with_submitted_username() -> None:
     await _seed_all()
     username = f"audit_nobody_{uuid.uuid4().hex[:8]}"
-    response = await _call("POST", "/api/v1/auth/login", json={"username": username, "password": "wrong"})
+    response = await _call(
+        "POST", "/api/v1/auth/login", json={"username": username, "password": "wrong"}
+    )
     assert response.status_code == 401
 
     entry = await _single_entry(response)
@@ -87,13 +115,19 @@ async def test_failed_login_is_journaled_with_submitted_username() -> None:
     assert entry.result == "denied"
     assert entry.status_code == 401
     assert entry.ip == _CLIENT_IP
-    assert entry.trace_id == response.json()["error"]["trace_id"], "error body and journal must share trace_id"
+    assert entry.trace_id == response.json()["error"]["trace_id"], (
+        "error body and journal must share trace_id"
+    )
 
 
 @pytest.mark.asyncio
 async def test_successful_login_is_journaled_with_user_id() -> None:
     await _seed_all()
-    response = await _call("POST", "/api/v1/auth/login", json={"username": "manager", "password": "manager123"})
+    response = await _call(
+        "POST",
+        "/api/v1/auth/login",
+        json={"username": "manager", "password": "manager123"},
+    )
     assert response.status_code == 200
 
     entry = await _single_entry(response)
@@ -110,7 +144,12 @@ async def test_risk_acknowledge_is_journaled_with_risk_target() -> None:
     await _add_risk(risk_id)
     token = await _login("manager", "manager123")
 
-    response = await _call("POST", f"/api/v1/risks/{risk_id}/acknowledge", token=token, json={"expected_version": 1})
+    response = await _call(
+        "POST",
+        f"/api/v1/risks/{risk_id}/acknowledge",
+        token=token,
+        json={"expected_version": 1},
+    )
     assert response.status_code == 200, response.text
 
     entry = await _single_entry(response)
@@ -134,7 +173,9 @@ async def test_risk_reject_and_defer_are_journaled(decision: str, body: dict) ->
     await _add_risk(risk_id)
     token = await _login("manager", "manager123")
 
-    response = await _call("POST", f"/api/v1/risks/{risk_id}/{decision}", token=token, json=body)
+    response = await _call(
+        "POST", f"/api/v1/risks/{risk_id}/{decision}", token=token, json=body
+    )
     assert response.status_code == 200, response.text
 
     entry = await _single_entry(response)
@@ -148,10 +189,16 @@ async def test_work_order_creation_targets_the_created_order() -> None:
     await _seed_all()
     token = await _login("manager", "manager123")
     body = {
-        "mode": "draft", "source_risk_id": None, "facility_id": "fac_5122",
-        "target_entity_type": "sensor", "target_entity_id": "sensor_audit", "work_type": "inspection",
-        "priority": "medium", "due_at": datetime(2051, 1, 1, tzinfo=timezone.utc).isoformat(),
-        "description": "audit test", "comment": None,
+        "mode": "draft",
+        "source_risk_id": None,
+        "facility_id": "fac_5122",
+        "target_entity_type": "facility",
+        "target_entity_id": "fac_5122",
+        "work_type": "inspection",
+        "priority": "medium",
+        "due_at": datetime(2051, 1, 1, tzinfo=timezone.utc).isoformat(),
+        "description": "audit test",
+        "comment": None,
     }
     response = await _call("POST", "/api/v1/work-orders", token=token, json=body)
     assert response.status_code == 201, response.text
@@ -169,14 +216,19 @@ async def test_scenario_activation_records_facility_in_details() -> None:
         facility_id = (
             await session.execute(
                 select(SensorChannel.facility_id)
-                .where(SensorChannel.sensor_type_id == "smoke_detector", SensorChannel.facility_id.isnot(None))
+                .where(
+                    SensorChannel.sensor_type_id == "smoke_detector",
+                    SensorChannel.facility_id.isnot(None),
+                )
                 .limit(1)
             )
         ).scalar_one()
     token = await _login("manager", "manager123")
 
     response = await _call(
-        "POST", "/api/v1/system/scenarios/fire_smoke_only/activate", token=token,
+        "POST",
+        "/api/v1/system/scenarios/fire_smoke_only/activate",
+        token=token,
         json={"facility_id": facility_id, "seed": 3},
     )
     assert response.status_code == 200, response.text
@@ -192,10 +244,14 @@ async def test_degrade_and_clear_are_journaled_against_the_source() -> None:
     token = await _login("manager", "manager123")
 
     degrade = await _call(
-        "POST", "/api/v1/system/source-health/ods_journal/degrade", token=token,
+        "POST",
+        "/api/v1/system/source-health/ods_journal/degrade",
+        token=token,
         json={"status": "delayed", "duration_seconds": 30},
     )
-    clear = await _call("DELETE", "/api/v1/system/source-health/ods_journal/degrade", token=token)
+    clear = await _call(
+        "DELETE", "/api/v1/system/source-health/ods_journal/degrade", token=token
+    )
     assert (degrade.status_code, clear.status_code) == (204, 204)
 
     degrade_entry = await _single_entry(degrade)
@@ -212,7 +268,9 @@ async def test_permission_denial_is_journaled_as_denied() -> None:
     await _seed_all()
     token = await _login("dispatcher", "dispatcher123")
     response = await _call(
-        "POST", "/api/v1/system/source-health/smvu/degrade", token=token,
+        "POST",
+        "/api/v1/system/source-health/smvu/degrade",
+        token=token,
         json={"status": "delayed", "duration_seconds": 30},
     )
     assert response.status_code == 403
@@ -237,17 +295,34 @@ async def test_get_requests_are_not_journaled() -> None:
 async def test_journal_never_contains_password_or_token() -> None:
     await _seed_all()
     secret_password = f"Secret-{uuid.uuid4().hex}"
-    await _call("POST", "/api/v1/auth/login", json={"username": "manager", "password": secret_password})
+    await _call(
+        "POST",
+        "/api/v1/auth/login",
+        json={"username": "manager", "password": secret_password},
+    )
     token = await _login("manager", "manager123")
     await _call(
-        "POST", "/api/v1/system/source-health/smvu/degrade", token=token,
+        "POST",
+        "/api/v1/system/source-health/smvu/degrade",
+        token=token,
         json={"status": "delayed", "duration_seconds": 30},
     )
 
     async with async_session_factory() as session:
         entries = (await session.execute(select(AuditLogEntry))).scalars().all()
     serialized = " ".join(
-        repr((e.user_id, e.username, e.action, e.target_type, e.target_id, e.ip, e.trace_id, e.details))
+        repr(
+            (
+                e.user_id,
+                e.username,
+                e.action,
+                e.target_type,
+                e.target_id,
+                e.ip,
+                e.trace_id,
+                e.details,
+            )
+        )
         for e in entries
     )
     assert entries, "journal should not be empty here"
@@ -256,13 +331,19 @@ async def test_journal_never_contains_password_or_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_journal_write_failure_does_not_break_the_response(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_journal_write_failure_does_not_break_the_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     await _seed_all()
 
     async def _broken_write(_: AuditLogEntry) -> None:
         raise SQLAlchemyError("simulated journal outage")
 
     monkeypatch.setattr(audit_recorder, "write_audit_entry", _broken_write)
-    response = await _call("POST", "/api/v1/auth/login", json={"username": "manager", "password": "manager123"})
+    response = await _call(
+        "POST",
+        "/api/v1/auth/login",
+        json={"username": "manager", "password": "manager123"},
+    )
     assert response.status_code == 200, response.text
     assert response.json()["token"]

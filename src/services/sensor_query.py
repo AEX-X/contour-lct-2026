@@ -4,8 +4,10 @@ Orphaned/unknown channels (facility_id is None) are visible only to
 all_facilities-scope callers -- they cannot be attributed to any
 specific dispatcher's assigned facilities.
 """
-from sqlalchemy import select
+
+from sqlalchemy import String, column, literal, select, true, values
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from src.errors import ApiError
 from src.models.hierarchy import HierarchyNode
@@ -20,7 +22,9 @@ def _value_type_for(sensor_type_id: str) -> str:
     return _VALUE_TYPE_BY_ID.get(sensor_type_id, "categorical")
 
 
-def _to_sensor_out(channel: SensorChannel) -> SensorOut:
+def _to_sensor_out(
+    channel: SensorChannel, current_reading: CurrentReading | None = None
+) -> SensorOut:
     return SensorOut(
         id=channel.id,
         channel_id=channel.channel_id,
@@ -31,7 +35,54 @@ def _to_sensor_out(channel: SensorChannel) -> SensorOut:
         display_name=channel.display_name,
         facility_id=channel.facility_id,
         hierarchy_node_id=channel.hierarchy_node_id,
+        current_reading=current_reading,
     )
+
+
+async def _latest_readings_for_channels(
+    session: AsyncSession, channel_ids: list[str]
+) -> dict[str, CurrentReading]:
+    """Return one deterministic latest reading per channel in one indexed query."""
+    if not channel_ids:
+        return {}
+
+    requested_channels = (
+        values(column("channel_id", String), name="requested_channels")
+        .data([(channel_id,) for channel_id in channel_ids])
+        .alias()
+    )
+    latest = (
+        select(
+            SensorReading.raw_value.label("raw_value"),
+            SensorReading.numeric_value.label("numeric_value"),
+            SensorReading.occurred_at.label("occurred_at"),
+        )
+        .where(SensorReading.channel_id == requested_channels.c.channel_id)
+        .order_by(SensorReading.occurred_at.desc(), SensorReading.id.desc())
+        .limit(1)
+        .correlate(requested_channels)
+        .lateral("latest_sensor_reading")
+    )
+    rows = (
+        await session.execute(
+            select(
+                requested_channels.c.channel_id,
+                latest.c.raw_value,
+                latest.c.numeric_value,
+                latest.c.occurred_at,
+            ).select_from(requested_channels.outerjoin(latest, true()))
+        )
+    ).all()
+    return {
+        row.channel_id: CurrentReading(
+            value=row.raw_value,
+            numeric_value=row.numeric_value,
+            unit=None,
+            measured_at=row.occurred_at,
+        )
+        for row in rows
+        if row.occurred_at is not None
+    }
 
 
 async def list_sensors(
@@ -77,7 +128,9 @@ async def list_sensors(
         stmt = stmt.where(SensorChannel.sensor_type_id == sensor_type)
     if query:
         like = f"%{query}%"
-        stmt = stmt.where((SensorChannel.display_name.ilike(like)) | (SensorChannel.tag.ilike(like)))
+        stmt = stmt.where(
+            (SensorChannel.display_name.ilike(like)) | (SensorChannel.tag.ilike(like))
+        )
 
     all_matching = (await session.execute(stmt)).scalars().all()
     total = len(all_matching)
@@ -92,22 +145,55 @@ async def list_sensors(
             start = total
 
     page = all_matching[start : start + limit]
-    next_cursor = page[-1].id if len(page) == limit and (start + limit) < total else None
+    next_cursor = (
+        page[-1].id if len(page) == limit and (start + limit) < total else None
+    )
 
-    return [_to_sensor_out(c) for c in page], next_cursor, total
+    latest_by_channel = await _latest_readings_for_channels(
+        session, [channel.channel_id for channel in page]
+    )
+    return (
+        [
+            _to_sensor_out(channel, latest_by_channel.get(channel.channel_id))
+            for channel in page
+        ],
+        next_cursor,
+        total,
+    )
 
 
 async def _hierarchy_path(session: AsyncSession, node_id: str | None) -> list[str]:
     if node_id is None:
         return []
-    by_id = dict((await session.execute(select(HierarchyNode.id, HierarchyNode.parent_id))).all())
-    chain: list[str] = []
-    current: str | None = node_id
-    while current is not None and current in by_id:
-        chain.append(current)
-        current = by_id[current]
-    chain.reverse()
-    return chain
+
+    ancestors = (
+        select(
+            HierarchyNode.id.label("id"),
+            HierarchyNode.parent_id.label("parent_id"),
+            HierarchyNode.display_name.label("display_name"),
+            literal(0).label("depth"),
+        )
+        .where(HierarchyNode.id == node_id)
+        .cte("sensor_hierarchy_path", recursive=True)
+    )
+    parent = aliased(HierarchyNode)
+    ancestors = ancestors.union_all(
+        select(
+            parent.id,
+            parent.parent_id,
+            parent.display_name,
+            (ancestors.c.depth + 1).label("depth"),
+        )
+        .join(ancestors, parent.id == ancestors.c.parent_id)
+        .where(ancestors.c.depth < 63)
+    )
+    return list(
+        (
+            await session.execute(
+                select(ancestors.c.display_name).order_by(ancestors.c.depth.desc())
+            )
+        ).scalars()
+    )
 
 
 async def get_sensor_detail(
@@ -128,39 +214,29 @@ async def get_sensor_detail(
         ApiError: 404 if the sensor does not exist; 403 if it exists but is
             outside scope (orphans are out of scope for anyone restricted).
     """
-    channel = (await session.execute(select(SensorChannel).where(SensorChannel.id == sensor_id))).scalar_one_or_none()
+    channel = (
+        await session.execute(
+            select(SensorChannel).where(SensorChannel.id == sensor_id)
+        )
+    ).scalar_one_or_none()
     if channel is None:
         raise ApiError(404, "NOT_FOUND", "Датчик не найден")
 
-    if allowed_facility_ids is not None:
-        if channel.facility_id is None or channel.facility_id not in allowed_facility_ids:
-            raise ApiError(403, "SENSOR_ACCESS_DENIED", "Недостаточно прав для просмотра датчика")
-
-    latest = (
-        await session.execute(
-            select(SensorReading)
-            .where(SensorReading.channel_id == channel.channel_id)
-            .order_by(SensorReading.occurred_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-
-    current_reading = None
-    if latest is not None:
-        current_reading = CurrentReading(
-            value=latest.raw_value,
-            numeric_value=latest.numeric_value,
-            unit=None,
-            measured_at=latest.occurred_at,
+    if allowed_facility_ids is not None and (
+        channel.facility_id is None or channel.facility_id not in allowed_facility_ids
+    ):
+        raise ApiError(
+            403, "SENSOR_ACCESS_DENIED", "Недостаточно прав для просмотра датчика"
         )
 
-    base = _to_sensor_out(channel)
+    current_reading = (
+        await _latest_readings_for_channels(session, [channel.channel_id])
+    ).get(channel.channel_id)
+
+    base = _to_sensor_out(channel, current_reading)
     return SensorDetailOut(
         **base.model_dump(),
         hierarchy_path=await _hierarchy_path(session, channel.hierarchy_node_id),
-        current_reading=current_reading,
-        current_state="unknown",
         forecast_summary=None,
-        data_health="unavailable",
         maintenance_state="unknown",
     )

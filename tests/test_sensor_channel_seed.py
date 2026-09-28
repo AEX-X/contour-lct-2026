@@ -9,7 +9,10 @@ from src.db import async_session_factory
 from src.models.hierarchy import Facility, HierarchyNode
 from src.models.sensor import SensorChannel
 from src.services.facility_seed import seed_facility_catalogue
-from src.services.sensor_channel_seed import DEFAULT_CSV_PATH, seed_sensor_channel_catalogue
+from src.services.sensor_channel_seed import (
+    DEFAULT_CSV_PATH,
+    seed_sensor_channel_catalogue,
+)
 
 FIXTURE_QUOTED = Path(__file__).parent / "fixtures" / "quoted_channel_catalogue.csv"
 
@@ -46,8 +49,27 @@ async def test_real_catalogue_seeds_all_channels_with_correct_type_and_facility(
         node = (
             await session.execute(select(HierarchyNode).where(HierarchyNode.id == sample.hierarchy_node_id))
         ).scalar_one()
-        assert node.parent_id == "node_fac_20"
         assert node.entity_type == "sensor"
+        assert node.facility_id == "fac_20"
+
+        # The equipment registry enrichment may already have inserted a
+        # system/equipment level between the sensor and facility roots.  The
+        # channel seed contract is facility ancestry, not a fixed hierarchy
+        # depth, so verify the ancestry chain instead of requiring a direct
+        # parent.
+        parent_id = node.parent_id
+        visited: set[str] = set()
+        while parent_id != "node_fac_20":
+            assert parent_id is not None
+            assert parent_id not in visited
+            visited.add(parent_id)
+            parent = (
+                await session.execute(
+                    select(HierarchyNode).where(HierarchyNode.id == parent_id)
+                )
+            ).scalar_one()
+            assert parent.facility_id == "fac_20"
+            parent_id = parent.parent_id
 
 
 @pytest.mark.asyncio

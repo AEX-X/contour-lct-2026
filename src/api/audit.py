@@ -35,6 +35,8 @@ def _parse_cursor(raw: str) -> int:
 async def get_audit_journal(
     user_id: str | None = Query(default=None),
     action: str | None = Query(default=None),
+    target_type: str | None = Query(default=None),
+    target_id: str | None = Query(default=None),
     from_: str | None = Query(default=None, alias="from"),
     to: str | None = Query(default=None),
     cursor: str | None = Query(default=None),
@@ -46,6 +48,8 @@ async def get_audit_journal(
     Args:
         user_id: Optional exact actor filter.
         action: Optional exact action filter, e.g. "POST /api/v1/work-orders".
+        target_type: Optional exact target resource type filter.
+        target_id: Optional exact target resource identifier filter.
         from_: Optional ISO 8601 inclusive lower bound on occurred_at.
         to: Optional ISO 8601 inclusive upper bound on occurred_at.
         cursor: Opaque pagination cursor from the previous page's meta.
@@ -58,15 +62,23 @@ async def get_audit_journal(
     criteria = AuditFilter(
         user_id=user_id,
         action=action,
+        target_type=target_type,
+        target_id=target_id,
         occurred_from=_parse_iso_datetime(from_, "from") if from_ else None,
         occurred_to=_parse_iso_datetime(to, "to") if to else None,
     )
     after_id = _parse_cursor(cursor) if cursor else None
 
     async with async_session_factory() as session:
-        items, next_cursor, total = await list_audit_entries(session, criteria, after_id=after_id, limit=limit)
+        items, next_cursor, total = await list_audit_entries(
+            session, criteria, after_id=after_id, limit=limit
+        )
 
     return AuditListEnvelope(
         data=[AuditEntryOut.model_validate(item) for item in items],
-        meta=AuditListMeta(next_cursor=next_cursor, total=total, generated_at=datetime.now(timezone.utc)),
+        meta=AuditListMeta(
+            next_cursor=next_cursor,
+            total=total,
+            generated_at=datetime.now(timezone.utc),
+        ),
     )

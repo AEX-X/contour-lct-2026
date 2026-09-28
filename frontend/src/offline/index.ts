@@ -2,6 +2,12 @@ export { OfflineEngineerService } from './service'
 export type { OfflineServiceOptions } from './service'
 export { clearDefaultOfflineStorage } from './storage'
 export {
+  cacheOfflineEngineerSession,
+  clearOfflineEngineerSession,
+  readOfflineEngineerSession,
+  shouldAttemptOfflineEngineerRestore,
+} from './sessionCache'
+export {
   IndexedDbOfflineStorage,
   MemoryOfflineStorage,
   createDefaultOfflineStorage,
