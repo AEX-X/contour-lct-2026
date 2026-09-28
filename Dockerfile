@@ -11,6 +11,8 @@ COPY alembic.ini ./alembic.ini
 COPY pytest.ini ./pytest.ini
 COPY tests ./tests
 COPY data ./data
+# ML model-quality metrics: fallback for /api/v1/model-quality when the ML service is not running.
+COPY ml/outputs/ml-baseline-v2/validate-stability.json ./ml/outputs/ml-baseline-v2/validate-stability.json
 
 EXPOSE 8000
 

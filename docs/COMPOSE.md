@@ -67,7 +67,9 @@ $env:ML_DATA_DIR="D:/ml-prepared"; docker compose -f docker-compose.yml -f docke
 
 Порядок старта соблюдается сам: `app` ждёт, пока `ml` загрузит журнал и начнёт отвечать на `/health`. Это важно: backend запрашивает прогнозы один раз при старте. На полном журнале загрузка ML занимает от десятков секунд до нескольких минут; первая сборка образа ML (установка зависимостей) — несколько минут.
 
-Проверка: `GET https://localhost:8443/api/v1/risks` под `manager`. Прогнозы моделей видны по полю `model`: `hgb-v2-run002-…` — по датчикам, `hgb-object-run008-…` и `hgb-object-run009-…` — по объектам (`target.type = "facility"`).
+Проверка: `GET https://localhost:8443/api/v1/risks` под `manager`. Прогнозы моделей видны по полю `model`: `hgb-v2-run002-…` — по датчикам, `hgb-object-run008-…` и `hgb-object-run009-…` — по объектам (`target.type = "facility"`); у объектных рисков заполнены `verdict` и `blind_spots`. `GET /api/v1/model-quality` отдаёт метрики с заголовком `X-Data-Source: ml_service`.
+
+Вкладка «Качество модели» работает и без ML-сервиса: в режиме без ML `/model-quality` отдаёт тот же файл метрик из `ml/` (`X-Data-Source: file`).
 
 ### Переменные режима с ML
 

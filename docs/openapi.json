@@ -2058,6 +2058,144 @@
         }
       }
     },
+    "/api/v1/model-quality": {
+      "get": {
+        "tags": [
+          "model-quality"
+        ],
+        "summary": "Get Model Quality",
+        "description": "Return the model-quality JSON exactly as the ML team provides it.\n\nArgs:\n    sources: The ML service client and fallback file.\n    _: The caller; must hold analytics.read.technical.\n\nReturns:\n    The metrics JSON with the source in the X-Data-Source header.\n\nRaises:\n    ApiError: 503 SOURCE_UNAVAILABLE when neither source works.",
+        "operationId": "get_model_quality_api_v1_model_quality_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Метрики моделей от ML-команды без изменений; заголовок X-Data-Source: ml_service | file",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "503": {
+            "description": "Ни ML-сервис, ни файл метрик недоступны"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/reports/risks": {
+      "get": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Export Risks",
+        "description": "Download the risks of a period with decisions and linked work orders.\n\nArgs:\n    request: The current request (the export is written to the audit journal).\n    from_: Optional ISO 8601 inclusive lower bound on the forecast time.\n    to: Optional ISO 8601 inclusive upper bound on the forecast time.\n    report_format: One of the supported formats; xlsx by default.\n    user: The caller; must hold report.export. Only facilities in scope are exported.\n\nReturns:\n    The file as an attachment.\n\nRaises:\n    ApiError: 400 for an unknown format or a malformed date.",
+        "operationId": "export_risks_api_v1_reports_risks_get",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "xlsx | csv_semicolon | csv_comma",
+              "default": "xlsx",
+              "title": "Format"
+            },
+            "description": "xlsx | csv_semicolon | csv_comma"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Файл отчёта (xlsx или csv) как вложение"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -3640,6 +3778,24 @@
               }
             ],
             "title": "Model Threshold"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          },
+          "blind_spots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blind Spots"
           },
           "risk_level": {
             "type": "string",

@@ -54,6 +54,20 @@ Swagger UI (интерактивная документация, тот же к�
 | Заявки | `POST /work-orders`, `GET /work-orders` |
 | Статус источников | `GET /system/source-health`, `GET /system/scenarios`, `POST /system/scenarios/{id}/activate`, `POST`/`DELETE /system/source-health/{source}/degrade` |
 | Журнал аудита | `GET /audit` |
+| Качество модели | `GET /model-quality` — метрики моделей ML-команды без изменений (право `analytics.read.technical`); заголовок `X-Data-Source`: `ml_service` или `file` |
+| Отчёты | `GET /reports/risks?from=&to=&format=` — выгрузка рисков для руководства (право `report.export`, с учётом зоны видимости) |
+
+**Выгрузка рисков** (`/reports/risks`): колонки — риск, объект, тип, вероятность, уровень, время прогноза (МСК), решение диспетчера, причина отклонения, комментарий, номер заявки. Параметр `format`:
+
+| `format` | Файл | Для чего |
+|---|---|---|
+| `xlsx` (по умолчанию) | Excel | открывается везде, числа и даты — числами и датами |
+| `csv_semicolon` | CSV, разделитель `;`, дробные через запятую, UTF-8 с BOM | русский Excel по двойному щелчку |
+| `csv_comma` | CSV, разделитель `,`, дробные через точку, UTF-8 с BOM | английский Excel, Google Таблицы, LibreOffice, скрипты |
+
+Каждая выгрузка записывается в журнал аудита (кто, за какой период, в каком формате).
+
+**Карточка риска** (`/risks`, `/risks/{id}`): у рисков по объектам есть `verdict` — одна фраза для диспетчера от ML-модели — и `blind_spots` — чего модель на объекте не видит (например, «нет датчиков затопления»). У рисков по датчикам и у прогнозов без ML — `null` и `[]`. Низкая вероятность на объекте со слепыми зонами означает, что модель этого не видит, а не что риска нет.
 
 Каждый ответ несёт заголовок `X-Trace-Id`; по нему запрос находится в журнале аудита.
 
@@ -128,6 +142,7 @@ docker compose run --rm --no-deps app sh -c "alembic upgrade head && pytest -q"
 | `HTTPS_PORT` | порт хоста для HTTPS (docker compose) | `8443` |
 | `HTTP_PORT` | порт хоста для перенаправления с HTTP (docker compose) | `8080` |
 | `CORS_ALLOWED_ORIGINS` | адреса браузерного фронтенда, которым разрешены запросы к API, через запятую; пусто — CORS выключен | в `docker compose`: локальные dev-серверы; вне Docker: пусто |
+| `ML_QUALITY_FILE` | файл метрик ML-команды, который отдаёт `/model-quality`, если ML-сервис не запущен | `ml/outputs/ml-baseline-v2/validate-stability.json` (входит в образ) |
 
 ## Подключение ML-сервиса
 

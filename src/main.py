@@ -19,6 +19,8 @@ from src.api.work_orders import router as work_orders_router
 from src.api.hierarchy import router as hierarchy_router
 from src.api.layout import router as layout_router
 from src.api.me import router as me_router
+from src.api.model_quality import router as model_quality_router
+from src.api.reports import router as reports_router
 from src.api.sensor_series import router as sensor_series_router
 from src.api.sensors import router as sensors_router
 from src.api.system import router as system_router
@@ -91,6 +93,8 @@ app.include_router(events_router)
 app.include_router(risks_router)
 app.include_router(work_orders_router)
 app.include_router(audit_router)
+app.include_router(model_quality_router)
+app.include_router(reports_router)
 
 
 @app.get("/health")
