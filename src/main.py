@@ -22,6 +22,8 @@ from src.api.me import router as me_router
 from src.api.sensor_series import router as sensor_series_router
 from src.api.sensors import router as sensors_router
 from src.api.system import router as system_router
+from src.config import get_settings
+from src.cors import install_cors, parse_origins
 from src.db import async_session_factory, get_session
 from src.errors import register_exception_handlers
 from src.services.audit_recorder import AuditMiddleware
@@ -73,6 +75,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Moskollektor Backend", version="0.1.0", lifespan=lifespan)
 app.add_middleware(AuditMiddleware)
+# Added last, so it is the outermost middleware: CORS headers also land on error responses.
+install_cors(app, parse_origins(get_settings().cors_allowed_origins))
 register_exception_handlers(app)
 app.include_router(config_router)
 app.include_router(auth_router)

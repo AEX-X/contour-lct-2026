@@ -54,6 +54,16 @@ Swagger UI (интерактивная документация, тот же к�
 
 Каждый ответ несёт заголовок `X-Trace-Id`; по нему запрос находится в журнале аудита.
 
+### Обращение из браузерного фронтенда (CORS)
+
+Фронтенд с другого адреса может обращаться к API, если его адрес указан в `CORS_ALLOWED_ORIGINS` (через запятую, без завершающего `/`). В `docker compose` по умолчанию разрешены локальные dev-серверы `http://localhost:3000`, `http://localhost:5173` и `http://127.0.0.1:5173`; для развёрнутого фронта укажите его адрес:
+
+```
+CORS_ALLOWED_ORIGINS=https://front.example.ru docker compose up --build
+```
+
+Токен передаётся в заголовке `Authorization: Bearer <token>`; cookies не используются, поэтому в запросах из браузера не нужен `credentials: "include"`. Заголовок `X-Trace-Id` фронтенду доступен.
+
 ## Демо-пользователи
 
 Сеятся автоматически при старте (см. `src/services/demo_seed.py`):
@@ -114,6 +124,7 @@ docker compose run --rm --no-deps app sh -c "alembic upgrade head && pytest -q"
 | `LOGIN_FAILURE_WINDOW_SECONDS` | окно подсчёта неудачных входов, секунд | `900` |
 | `HTTPS_PORT` | порт хоста для HTTPS (docker compose) | `8443` |
 | `HTTP_PORT` | порт хоста для перенаправления с HTTP (docker compose) | `8080` |
+| `CORS_ALLOWED_ORIGINS` | адреса браузерного фронтенда, которым разрешены запросы к API, через запятую; пусто — CORS выключен | в `docker compose`: локальные dev-серверы; вне Docker: пусто |
 
 ## Подключение ML-сервиса
 

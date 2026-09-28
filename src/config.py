@@ -25,6 +25,8 @@ class Settings(BaseSettings):
         login_max_failures_per_ip: Same limit per client IP; higher so an
             office behind one NAT is not locked by a few typos.
         login_failure_window_seconds: Sliding window for both limits.
+        cors_allowed_origins: Comma-separated browser origins allowed to call
+            the API (e.g. the frontend's URL); empty disables CORS.
     """
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -39,6 +41,7 @@ class Settings(BaseSettings):
     login_max_failures_per_username: int = 5
     login_max_failures_per_ip: int = 20
     login_failure_window_seconds: int = 900
+    cors_allowed_origins: str = ""
 
 
 @lru_cache

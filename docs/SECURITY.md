@@ -50,6 +50,13 @@
 - Журнал аудита читается только с правом `audit.read`.
 - Демо-пользователи: `manager` — все права, включая `system.manage` и `audit.read`, все объекты; `dispatcher` — `facility.read.assigned`, `sensor.read`, `risk.read`, `risk.acknowledge`, `work_order.read`, `work_order.create_draft`, объекты `fac_5122` и `fac_5339`.
 
+## CORS
+
+- Браузерные запросы с другого адреса разрешены только адресам из `CORS_ALLOWED_ORIGINS` (явный список); остальным браузер откажет в ответе на preflight. Значение `*` допустимо только для демо.
+- Cookies и credentials не разрешены (`Access-Control-Allow-Credentials` не отдаётся): аутентификация — только токен в заголовке `Authorization`, поэтому чужая страница не может выполнить запрос от имени вошедшего пользователя за счёт его cookies.
+- Разрешены заголовки `Authorization` и `Content-Type`; фронтенду открыт `X-Trace-Id`.
+- CORS — защита на уровне браузера, а не авторизация: доступ к данным по-прежнему решают токен и RBAC.
+
 ## Журнал аудита
 
 - Таблица `audit_log` хранит: время, пользователя (для неудачного входа — введённый логин), действие вида `POST /api/v1/risks/{risk_id}/acknowledge`, тип и id целевого объекта, результат (`success`, `denied`, `failure`), HTTP-код, IP клиента, `trace_id` и при необходимости уточнения (например, объект активированного сценария или причина `locked_out`).
