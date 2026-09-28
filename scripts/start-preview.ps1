@@ -10,6 +10,52 @@ $previewFile = Join-Path $script:ContourRoot "docker-compose.preview.yml"
 $composeArgs = (Get-ContourComposeArguments -Mode Full) + @("-f", $previewFile)
 $baseUrl = Get-ContourBaseUrl
 
+function Get-PreviewUrl {
+    param(
+        [string[]]$LogLines
+    )
+
+    $addresses = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in $LogLines) {
+        try {
+            $event = $line | ConvertFrom-Json -ErrorAction Stop
+            if ($event.event -eq "tcpip-forward" -and
+                $event.status -eq "success" -and
+                $event.tls_termination -eq $true -and
+                -not [string]::IsNullOrWhiteSpace($event.address)) {
+                [void]$addresses.Add("https://$($event.address)")
+            }
+        }
+        catch {
+            # localhost.run also writes human-readable connection diagnostics.
+        }
+    }
+
+    if ($addresses.Count -eq 0) {
+        return $null
+    }
+    return $addresses[$addresses.Count - 1]
+}
+
+function Test-PreviewUrl {
+    param(
+        [string]$Url,
+        [int]$TimeoutSeconds = 10
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        return $false
+    }
+
+    try {
+        $publicHealth = Invoke-RestMethod -Uri "$Url/health" -TimeoutSec $TimeoutSeconds
+        return $publicHealth.status -eq "ok"
+    }
+    catch {
+        return $false
+    }
+}
+
 try {
     $health = Invoke-RestMethod -Uri "$baseUrl/health" -SkipCertificateCheck -TimeoutSec 10
 }
@@ -29,52 +75,42 @@ try {
         "up", "-d", "--no-deps", "--wait", "--wait-timeout", "60", "preview-gateway"
     ))
     Invoke-ContourDocker -Arguments ($composeArgs + @("up", "-d", "--no-deps", "preview"))
+
+    # An anonymous localhost.run edge route can expire while the SSH process
+    # remains alive. Recreate only the tunnel when its published URL is stale.
+    $existingLogLines = & docker @composeArgs logs --no-color --no-log-prefix --tail 100 preview 2>&1
+    $existingPreviewUrl = Get-PreviewUrl -LogLines $existingLogLines
+    if (-not [string]::IsNullOrWhiteSpace($existingPreviewUrl) -and
+        -not (Test-PreviewUrl -Url $existingPreviewUrl)) {
+        Write-Warning "Существующий preview-туннель недоступен. Получаю новый временный адрес"
+        Invoke-ContourDocker -Arguments ($composeArgs + @("rm", "-f", "-s", "preview"))
+        Invoke-ContourDocker -Arguments ($composeArgs + @("up", "-d", "--no-deps", "preview"))
+    }
 }
 catch {
-    & docker @composeArgs rm -f -s preview preview-gateway *> $null
+    & docker @composeArgs rm -f -s preview *> $null
     throw
 }
 
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds($ReadyTimeoutSeconds)
 $previewUrl = $null
+$previewReady = $false
 $lastLogs = ""
 
 while ([DateTimeOffset]::UtcNow -lt $deadline) {
     $logLines = & docker @composeArgs logs --no-color --no-log-prefix --tail 100 preview 2>&1
     $lastLogs = $logLines -join [Environment]::NewLine
-    foreach ($line in $logLines) {
-        try {
-            $event = $line | ConvertFrom-Json -ErrorAction Stop
-            if ($event.event -eq "tcpip-forward" -and
-                $event.status -eq "success" -and
-                $event.tls_termination -eq $true -and
-                -not [string]::IsNullOrWhiteSpace($event.address)) {
-                $previewUrl = "https://$($event.address)"
-                break
-            }
-        }
-        catch {
-            # localhost.run also writes human-readable connection diagnostics.
-        }
-    }
+    $previewUrl = Get-PreviewUrl -LogLines $logLines
 
-    if (-not [string]::IsNullOrWhiteSpace($previewUrl)) {
-        try {
-            $publicHealth = Invoke-RestMethod -Uri "$previewUrl/health" -TimeoutSec 15
-            if ($publicHealth.status -eq "ok") {
-                break
-            }
-        }
-        catch {
-            # The hostname can appear in the log a few seconds before the edge route is ready.
-        }
+    if (Test-PreviewUrl -Url $previewUrl -TimeoutSeconds 15) {
+        $previewReady = $true
+        break
     }
     Start-Sleep -Seconds 2
 }
 
-if ([string]::IsNullOrWhiteSpace($previewUrl) -or
-    [DateTimeOffset]::UtcNow -ge $deadline) {
-    & docker @composeArgs rm -f -s preview preview-gateway *> $null
+if (-not $previewReady) {
+    & docker @composeArgs rm -f -s preview *> $null
     throw "Preview-туннель не стал доступен за $ReadyTimeoutSeconds секунд`n$lastLogs"
 }
 
