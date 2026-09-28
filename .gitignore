@@ -43,3 +43,6 @@ Thumbs.db
 
 # ==== Logs ====
 *.log
+
+# Prepared ML journal (large, not in git): see docs/COMPOSE.md
+ml-data/

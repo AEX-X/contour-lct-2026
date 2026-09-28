@@ -1,0 +1,53 @@
+# Adds the ML prediction service and points the backend at it.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ml.yml up --build
+#
+# Before the first run put the prepared journal (the 20??.parquet files from
+# LCT-ML work/ml-prepared) into ./ml-data, or set ML_DATA_DIR to its folder.
+# See docs/COMPOSE.md.
+services:
+  ml:
+    build:
+      context: .
+      dockerfile: deploy/ml.Dockerfile
+    command:
+      - python
+      - outputs/ml-service/service.py
+      - --prepared
+      - /data/prepared
+      - --config
+      - outputs/ml-dataset/dataset-config.json
+      - --decision
+      - outputs/ml-baseline-v2/decision.json
+      - --directory
+      - /ml/reference/channels.csv
+      - --object-decision
+      - outputs/ml-baseline-v2/run-008-incident72/object-decision.json
+      - --object-decision
+      - outputs/ml-baseline-v2/run-009-neispraven168/object-decision.json
+      - --pump-decision
+      - outputs/ml-pumps/run-005/pump-decision.json
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8090"
+      # The journal ends 2026-06-30; the service shifts "now" to this anchor.
+      - --demo-anchor
+      - ${ML_DEMO_ANCHOR:-2026-06-20T00:00:00}
+    volumes:
+      - ${ML_DATA_DIR:-./ml-data}:/data/prepared:ro
+    # No host port: only the backend talks to the ML service, inside the compose network.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 90
+
+  app:
+    environment:
+      ML_PREDICTOR_URL: http://ml:8090
+    depends_on:
+      # The backend asks for forecasts once at startup, so it must wait until the model is loaded.
+      ml:
+        condition: service_healthy

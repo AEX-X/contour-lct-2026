@@ -4,11 +4,14 @@
 
 ## Запуск (с нуля)
 
+Подробная инструкция — какие файлы где должны лежать, оба режима (без ML и с ML-сервисом), переменные и разбор проблем — в **`docs/COMPOSE.md`**.
+
 ```
-docker compose up --build
+docker compose up --build                                                  # без ML (StubPredictor)
+docker compose -f docker-compose.yml -f docker-compose.ml.yml up --build   # с ML-сервисом, нужен журнал в ml-data/
 ```
 
-Поднимутся три контейнера: `db` (PostgreSQL 16), `app` (FastAPI) и `proxy` (nginx с TLS). При старте `app` автоматически применяет миграции Alembic (`alembic upgrade head`), засеивает справочники и реальный датасет (объекты, каналы датчиков, операционное окно журнала событий), поднимает эмуляцию внешних источников (ОДС/реестр/заявки/replay СМВУ) и материализует события/прогнозы. `proxy` при первом запуске сам создаёт самоподписанный сертификат.
+В режиме без ML поднимутся три контейнера: `db` (PostgreSQL 16), `app` (FastAPI) и `proxy` (nginx с TLS). При старте `app` автоматически применяет миграции Alembic (`alembic upgrade head`), засеивает справочники и реальный датасет (объекты, каналы датчиков, операционное окно журнала событий), поднимает эмуляцию внешних источников (ОДС/реестр/заявки/replay СМВУ) и материализует события/прогнозы. `proxy` при первом запуске сам создаёт самоподписанный сертификат.
 
 API доступен только по HTTPS: **https://localhost:8443**. Порт 8080 отвечает перенаправлением на HTTPS. Приложение и база наружу напрямую не публикуются.
 
@@ -139,32 +142,25 @@ Backend взаимодействует с ML-частью через HTTP-кон
 
 Без `ML_PREDICTOR_URL` backend работает на встроенном `StubPredictor`, риски по объектам не создаются.
 
-### Запуск вместе с ML-сервисом (репозиторий LCT-ML)
+### Где код ML
 
-1. Поднять ML-сервис на хосте. Запускайте его с `--host 0.0.0.0`: на Docker Desktop (Windows/macOS) контейнер видит и сервис на `127.0.0.1`, но на Linux — только слушающий внешний интерфейс:
+Код ML-сервиса, обученные модели и калибровки лежат в папке **`ml/`** — это копия репозитория ML-команды [lex4ssss/LCT-ML](https://github.com/lex4ssss/LCT-ML), подключённая через `git subtree`. Отдельно клонировать ничего не нужно. Подробности о моделях и их качестве — `ml/README.md` и `ml/outputs/ml-service/README.md`.
 
-   ```
-   .venv/bin/python outputs/ml-service/service.py --prepared work/ml-prepared \
-     --config outputs/ml-dataset/dataset-config.json --decision outputs/ml-baseline-v2/decision.json \
-     --directory <справочник_каналов_датчиков.csv> \
-     --object-decision outputs/ml-baseline-v2/run-008-incident72/object-decision.json \
-     --object-decision outputs/ml-baseline-v2/run-009-neispraven168/object-decision.json \
-     --host 0.0.0.0 --port 8090 --demo-anchor 2026-06-20T00:00:00
-   ```
+Обновить `ml/` после изменений у ML-команды:
 
-   `--demo-anchor` нужен, потому что backend спрашивает прогноз на текущее время, а журнал ML заканчивается 30.06.2026.
+```
+git subtree pull --prefix=ml https://github.com/lex4ssss/LCT-ML.git main --squash
+```
 
-2. Поднять backend, указав адрес ML-сервиса. Из контейнера хост-машина доступна как `host.docker.internal`:
+### Запуск вместе с ML-сервисом
 
-   ```
-   ML_PREDICTOR_URL=http://host.docker.internal:8090 docker compose up --build
-   ```
+```
+docker compose -f docker-compose.yml -f docker-compose.ml.yml up --build
+```
 
-   В PowerShell: `$env:ML_PREDICTOR_URL="http://host.docker.internal:8090"; docker compose up --build`.
+Файл `docker-compose.ml.yml` добавляет контейнер `ml` (образ собирается из `ml/`, `deploy/ml.Dockerfile`) и сам направляет backend на `http://ml:8090`; backend ждёт, пока модель загрузится. **Перед запуском** нужно положить подготовленный журнал ML-команды — файлы `2019.parquet` … `2026.parquet` — в папку `ml-data/` (в git её нет из-за размера). Какие файлы, откуда их взять и что делать, если что-то не так, — в `docs/COMPOSE.md`.
 
-3. Проверить: `GET https://localhost:8443/api/v1/risks` под `manager` — у рисков в поле `model` будет имя модели ML-сервиса, риски по объектам имеют `target.type = "facility"`.
-
-Если backend запущен локально без Docker, адрес — `ML_PREDICTOR_URL=http://127.0.0.1:8090`.
+ML-разработчикам: сервис можно запускать и на хосте (`--host 0.0.0.0 --port 8090 --demo-anchor 2026-06-20T00:00:00`, команда — в `ml/outputs/ml-service/README.md`), а backend — обычным `docker compose up` с `ML_PREDICTOR_URL=http://host.docker.internal:8090`.
 
 ### Поведение при ошибках ML
 
@@ -186,4 +182,4 @@ Backend взаимодействует с ML-частью через HTTP-кон
 - SLA — треть горизонта прогноза: 8 ч для прогноза на 24 ч, 24 ч для 72 ч, 56 ч для 7 суток. Реагировать нужно до начала окна прогноза, а не к его концу.
 - В `/risks` поле `threshold` — нижняя граница уровня (0,85 для «Высокого», порог модели для «Среднего»); отдельно отдаются `alert` и `model_threshold`.
 
-**Что должен присылать ML-сервис.** В ответе `/predict` — необязательные поля `alert` (boolean), `model_threshold` (число) и `horizon_hours` (число больше 0). Пока их нет, прогнозы по датчикам считаются по общей шкале 0,3 / 0,6 / 0,85 с SLA по уровню (как у `StubPredictor`), а у рисков `alert = null`. Как только ML начнёт присылать поля, правило включится само — менять backend не нужно. Поля неверного типа считаются ошибкой ответа: канал пропускается. Для `/risk_map` правило действует уже сейчас: там есть и `alert`, и горизонт; порог берётся из `model_threshold`, а если его нет — из текущего поля `threshold` строки.
+**Поля от ML-сервиса.** Сервис ML-команды в каждом ответе `/predict` и каждой строке `/risk_map` присылает `alert` (boolean), `model_threshold` (порог в единицах вероятности: 0,147 у модели по датчикам, 0,652 и 0,559 у моделей по объектам) и `horizon_hours`. Уровень решает поле `alert`, а не сравнение вероятности с порогом. Поля неверного типа считаются ошибкой ответа: канал пропускается. Общая шкала 0,3 / 0,6 / 0,85 с SLA по уровню остаётся только для прогнозов без `alert` — у встроенного `StubPredictor` или у ML-сервиса, который эти поля не присылает; у таких рисков `alert = null`.
