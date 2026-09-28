@@ -80,7 +80,7 @@ jobs:
       - name: Apply migrations
         run: alembic upgrade head
       - name: Run backend tests
-        run: pytest -q
+        run: pytest -q tests
 
   compose:
     name: Compose configuration
