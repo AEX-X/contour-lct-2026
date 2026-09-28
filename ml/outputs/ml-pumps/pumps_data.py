@@ -1,0 +1,224 @@
+import numpy as np
+import pandas as pd
+
+ORIGIN = pd.Timestamp('2025-07-14 00:00:00')
+STEP_MINUTES = 5
+TRAJECTORY_LENGTHS = (12, 96, 288)
+SENSORS = [
+    'vibration_pump_bearing_drive', 'vibration_pump_bearing_nondrive',
+    'vibration_motor_bearing_drive', 'vibration_motor_bearing_nondrive',
+    'motor_current', 'pressure_diff_filter', 'pressure_suction', 'pressure_discharge',
+    'temperature_motor_bearing_drive', 'temperature_motor_bearing_nondrive',
+    'temperature_pump_bearing_drive', 'temperature_pump_bearing_nondrive',
+]
+PUMPS = ['NPV_2_1', 'NPV_2_2', 'NPV_2_3', 'NPV_2_4']
+CHANGE_WINDOW = 12
+
+
+class NotReconstructable(ValueError):
+    pass
+
+
+def load(path):
+    columns = ['timestamp', 'pump_id', 'fault_type_name', 'anomaly_score_1', *SENSORS]
+    frame = pd.read_csv(path, usecols=columns, dtype={'fault_type_name': 'string'}, parse_dates=['timestamp'])
+    return frame.reset_index(drop=True)
+
+
+def reconstruct(frame, allow_extra=False):
+    step = ((frame['timestamp'] - ORIGIN).dt.total_seconds() // (STEP_MINUTES * 60)).astype(np.int64).to_numpy()
+    labelled = frame['fault_type_name'].notna().to_numpy()
+    pump = frame['pump_id'].to_numpy()
+    trajectory = np.full(len(frame), -1, dtype=np.int64)
+    next_id = 0
+    max_length = max(TRAJECTORY_LENGTHS)
+    for pump_id in pd.unique(pump):
+        in_window = np.flatnonzero((pump == pump_id) & (step < max_length))
+        by_step = in_window[np.argsort(step[in_window], kind='stable')]
+        steps_here = step[by_step]
+        extra = extra_rows(by_step, steps_here, labelled, max_length)
+        if len(extra) and not allow_extra:
+            raise NotReconstructable(f'{pump_id}: extra rows at steps {sorted(step[extra])[:5]}')
+        keep = ~np.isin(by_step, extra)
+        by_step, steps_here = by_step[keep], steps_here[keep]
+        open_ids = np.array([], dtype=np.int64)
+        for current in range(max_length):
+            rows = by_step[steps_here == current]
+            if current == 0:
+                open_ids = np.arange(next_id, next_id + len(rows))
+                next_id += len(rows)
+            if len(rows) != len(open_ids):
+                raise NotReconstructable(f'{pump_id}: {len(rows)} rows at step {current}, {len(open_ids)} open trajectories')
+            trajectory[rows] = open_ids
+            open_ids = open_ids[~labelled[rows]]
+        if len(open_ids):
+            raise NotReconstructable(f'{pump_id}: {len(open_ids)} trajectories without a fault label')
+    result = frame.assign(step=step, trajectory=trajectory)
+    in_trajectory = result[result['trajectory'] >= 0]
+    lengths = in_trajectory.groupby('trajectory')['step'].agg(['size', 'max'])
+    if not lengths['size'].isin(TRAJECTORY_LENGTHS).all() or (lengths['size'] != lengths['max'] + 1).any():
+        raise NotReconstructable('trajectory lengths outside 12/96/288 or with gaps')
+    labels_per_trajectory = in_trajectory['fault_type_name'].notna().groupby(in_trajectory['trajectory']).sum()
+    if (labels_per_trajectory != 1).any():
+        raise NotReconstructable('trajectory without exactly one fault label')
+    if (labelled & (trajectory < 0)).any():
+        raise NotReconstructable('fault label outside trajectories')
+    return result
+
+
+def extra_rows(by_step, steps_here, labelled, max_length):
+    counts = np.bincount(steps_here, minlength=max_length)
+    labels = np.bincount(steps_here, weights=labelled[by_step], minlength=max_length).astype(np.int64)
+    open_count = np.zeros(max_length, dtype=np.int64)
+    open_count[-1] = counts[-1]
+    for current in range(max_length - 2, -1, -1):
+        open_count[current] = open_count[current + 1] + labels[current]
+    surplus = counts - open_count
+    if (surplus < 0).any() or (surplus > 1).any():
+        bad = int(np.flatnonzero((surplus < 0) | (surplus > 1))[0])
+        raise NotReconstructable(f'{int(counts[bad])} rows at step {bad}, {int(open_count[bad])} open trajectories')
+    extra = []
+    for current in np.flatnonzero(surplus == 1):
+        first = by_step[np.flatnonzero(steps_here == current)[0]]
+        if labelled[first]:
+            raise NotReconstructable(f'extra row at step {current} carries a fault label')
+        extra.append(first)
+    return np.asarray(extra, dtype=np.int64)
+
+
+def prediction_rows(reconstructed, horizons_minutes, feature_set='v1'):
+    frame = reconstructed.sort_values(['trajectory', 'step'], kind='stable')
+    in_trajectory = frame['trajectory'].to_numpy() >= 0
+    last_step = frame.groupby('trajectory')['step'].transform('max').to_numpy()
+    is_fault_row = in_trajectory & (frame['step'].to_numpy() == last_step)
+    fault_type = frame['fault_type_name'].where(is_fault_row).groupby(frame['trajectory']).transform('first')
+    remaining = np.where(in_trajectory, STEP_MINUTES * (last_step - frame['step'].to_numpy()), np.inf)
+    builders = dict(v1=feature_frame, v2=feature_frame_v2, a3=lambda f, t: feature_frame_a3(f, t)[0], v3=feature_frame_v3)
+    features = builders[feature_set](frame, in_trajectory)
+    keep = ~is_fault_row
+    labels = {h: ((remaining > 0) & (remaining <= h))[keep].astype(np.int8) for h in horizons_minutes}
+    meta = pd.DataFrame({
+        'pump_id': frame['pump_id'].to_numpy(),
+        'timestamp': frame['timestamp'].to_numpy(),
+        'trajectory': frame['trajectory'].to_numpy(),
+        'step': frame['step'].to_numpy(),
+        'fault_type': fault_type.where(in_trajectory).to_numpy(),
+    })[keep].reset_index(drop=True)
+    return features[keep].reset_index(drop=True), labels, meta
+
+
+def feature_frame(frame, in_trajectory):
+    values = frame[SENSORS].to_numpy(dtype=np.float64)
+    trajectory = frame['trajectory'].to_numpy()
+    position = frame.groupby('trajectory').cumcount().to_numpy()
+    lag = np.minimum(position, CHANGE_WINDOW)
+    earlier = values[np.arange(len(frame)) - lag]
+    change = np.where(in_trajectory[:, None], values - earlier, 0.0)
+    mean_step = np.divide(change, np.maximum(lag, 1)[:, None])
+    features = pd.DataFrame(values, columns=SENSORS, index=frame.index)
+    for i, name in enumerate(SENSORS):
+        features[f'{name}_change_{CHANGE_WINDOW}'] = change[:, i]
+        features[f'{name}_mean_step_{CHANGE_WINDOW}'] = mean_step[:, i]
+    features['pump_type'] = pd.Categorical(frame['pump_id'], categories=PUMPS).codes
+    assert (trajectory[np.arange(len(frame)) - lag] == trajectory).all()
+    return features
+
+
+def window_change(values, position, in_trajectory, window):
+    lag = np.minimum(position, window)
+    change = np.where(in_trajectory[:, None], values - values[np.arange(len(values)) - lag], 0.0)
+    return change, change / np.maximum(lag, 1)[:, None]
+
+
+def feature_frame_v2(frame, in_trajectory):
+    features = feature_frame(frame, in_trajectory)
+    values = frame[SENSORS].to_numpy(dtype=np.float64)
+    position = frame.groupby('trajectory').cumcount().to_numpy()
+    extra = {}
+    for window in (36, 96):
+        change, mean_step = window_change(values, position, in_trajectory, window)
+        for i, name in enumerate(SENSORS):
+            extra[f'{name}_change_{window}'] = change[:, i]
+            extra[f'{name}_mean_step_{window}'] = mean_step[:, i]
+    recent, _ = window_change(values, position, in_trajectory, CHANGE_WINDOW)
+    shifted = np.arange(len(values)) - np.minimum(position, CHANGE_WINDOW)
+    previous = np.where((position >= 2 * CHANGE_WINDOW)[:, None], recent[shifted], 0.0)
+    acceleration = np.where((position >= 2 * CHANGE_WINDOW)[:, None], recent - previous, 0.0)
+    for i, name in enumerate(SENSORS):
+        extra[f'{name}_acceleration_{CHANGE_WINDOW}'] = acceleration[:, i]
+    for group, columns in (('vibration', slice(0, 4)), ('temperature', slice(8, 12))):
+        extra[f'{group}_mean'] = values[:, columns].mean(axis=1)
+        extra[f'{group}_max'] = values[:, columns].max(axis=1)
+        extra[f'{group}_change_{CHANGE_WINDOW}_mean'] = recent[:, columns].mean(axis=1)
+        extra[f'{group}_change_{CHANGE_WINDOW}_max'] = recent[:, columns].max(axis=1)
+    return pd.concat([features, pd.DataFrame(extra, index=features.index)], axis=1)
+
+
+def normal_profile(frame):
+    normal = frame[frame['trajectory'] < 0].sort_values('timestamp', kind='stable')
+    rank = normal.groupby('pump_id').cumcount()
+    size = normal.groupby('pump_id')['pump_id'].transform('size')
+    train = normal[rank < (0.6 * size).astype(np.int64)]
+    profile = train.groupby('pump_id')[SENSORS].median()
+    return profile.reindex(frame['pump_id']).to_numpy(dtype=np.float64)
+
+
+def lagged(values, profile, position, lag):
+    earlier = np.arange(len(values)) - np.minimum(position, lag)
+    return np.where((position >= lag)[:, None], values[earlier], profile)
+
+
+def feature_frame_a3(frame, in_trajectory, windows=(CHANGE_WINDOW,), profile=None):
+    values = frame[SENSORS].to_numpy(dtype=np.float64)
+    position = frame.groupby('trajectory').cumcount().to_numpy()
+    profile = normal_profile(frame) if profile is None else profile
+    features = pd.DataFrame(values, columns=SENSORS, index=frame.index)
+    changes = {}
+    for window in windows:
+        changes[window] = np.where(in_trajectory[:, None], values - lagged(values, profile, position, window), 0.0)
+        for i, name in enumerate(SENSORS):
+            features[f'{name}_change_{window}'] = changes[window][:, i]
+    features['pump_type'] = pd.Categorical(frame['pump_id'], categories=PUMPS).codes
+    return features, values, position, profile, changes
+
+
+def feature_frame_v3(frame, in_trajectory, profile=None):
+    features, values, position, profile, changes = feature_frame_a3(frame, in_trajectory, (CHANGE_WINDOW, 36, 96), profile)
+    lag12 = lagged(values, profile, position, CHANGE_WINDOW)
+    lag24 = lagged(values, profile, position, 2 * CHANGE_WINDOW)
+    acceleration = np.where(in_trajectory[:, None], (values - lag12) - (lag12 - lag24), 0.0)
+    extra = {f'{name}_acceleration_{CHANGE_WINDOW}': acceleration[:, i] for i, name in enumerate(SENSORS)}
+    recent = changes[CHANGE_WINDOW]
+    for group, columns in (('vibration', slice(0, 4)), ('temperature', slice(8, 12))):
+        extra[f'{group}_mean'] = values[:, columns].mean(axis=1)
+        extra[f'{group}_max'] = values[:, columns].max(axis=1)
+        extra[f'{group}_change_{CHANGE_WINDOW}_mean'] = recent[:, columns].mean(axis=1)
+        extra[f'{group}_change_{CHANGE_WINDOW}_max'] = recent[:, columns].max(axis=1)
+    return pd.concat([features, pd.DataFrame(extra, index=features.index)], axis=1)
+
+
+def rule_alarm(features):
+    vibration = features[SENSORS[:4]].max(axis=1) > 2.8
+    temperature = features[SENSORS[8:]].max(axis=1) > 80
+    return (vibration | (features['motor_current'] > 82) | (features['pressure_diff_filter'] > 0.15)
+            | temperature).to_numpy()
+
+
+def split(meta):
+    part = np.empty(len(meta), dtype=object)
+    for pump_id, rows in meta.groupby('pump_id').groups.items():
+        rows = np.asarray(rows)
+        sub = meta.loc[rows]
+        trajectory_rows = rows[sub['trajectory'].to_numpy() >= 0]
+        ids = np.sort(meta.loc[trajectory_rows, 'trajectory'].unique())
+        part[trajectory_rows] = share_labels(meta.loc[trajectory_rows, 'trajectory'].to_numpy(), ids)
+        normal_rows = rows[sub['trajectory'].to_numpy() < 0]
+        order = normal_rows[np.argsort(meta.loc[normal_rows, 'timestamp'].to_numpy(), kind='stable')]
+        part[order] = share_labels(np.arange(len(order)), np.arange(len(order)))
+    return part
+
+
+def share_labels(keys, ordered_keys):
+    n = len(ordered_keys)
+    rank = pd.Series(np.arange(n), index=ordered_keys).reindex(keys).to_numpy()
+    return np.where(rank < int(0.6 * n), 'train', np.where(rank < int(0.8 * n), 'validation', 'test'))
