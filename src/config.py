@@ -27,6 +27,8 @@ class Settings(BaseSettings):
         login_failure_window_seconds: Sliding window for both limits.
         cors_allowed_origins: Comma-separated browser origins allowed to call
             the API (e.g. the frontend's URL); empty disables CORS.
+        ml_quality_file: The ML team's model-quality JSON, served by
+            /model-quality when the ML service is not reachable.
     """
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -42,6 +44,7 @@ class Settings(BaseSettings):
     login_max_failures_per_ip: int = 20
     login_failure_window_seconds: int = 900
     cors_allowed_origins: str = ""
+    ml_quality_file: str = "ml/outputs/ml-baseline-v2/validate-stability.json"
 
 
 @lru_cache

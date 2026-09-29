@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RiskTarget(BaseModel):
@@ -44,6 +44,8 @@ class RiskOut(BaseModel):
     threshold: float
     alert: bool | None = None
     model_threshold: float | None = None
+    verdict: str | None = None
+    blind_spots: list[str] = Field(default_factory=list)
     risk_level: str
     priority_score: float
     decision_status: str

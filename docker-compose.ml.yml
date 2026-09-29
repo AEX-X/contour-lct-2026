@@ -24,6 +24,7 @@ services:
       - outputs/ml-baseline-v2/run-009-neispraven168/object-decision.json
       - --pump-decision
       - outputs/ml-pumps/run-005/pump-decision.json
+      # Serves GET /quality (model-quality metrics for the frontend tab).
       - --quality
       - outputs/ml-baseline-v2/validate-stability.json
       - --host

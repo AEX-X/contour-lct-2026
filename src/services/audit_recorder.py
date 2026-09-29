@@ -3,7 +3,8 @@
 Covering mutations generically (instead of per-endpoint calls) means a new
 write endpoint is journaled without anyone remembering to add a call.
 GET requests are not journaled: dashboards poll them continuously and the
-journal would drown in reads.
+journal would drown in reads. The exception is data export (report
+downloads under /api/v1/reports/), which is journaled like a write.
 
 Endpoints can enrich the entry through `request.state.audit` (a dict with
 optional keys `user_id`, `username`, `target_type`, `target_id`,
@@ -26,6 +27,15 @@ from src.services.auth_service import get_active_session_user
 logger = logging.getLogger(__name__)
 
 MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# Reads that export data are journaled like writes (denied attempts included).
+JOURNALED_READ_PREFIXES = ("/api/v1/reports/",)
+
+
+def is_journaled(method: str, path: str) -> bool:
+    """Tell whether a request goes to the audit journal: every API write, and data exports."""
+    if not path.startswith("/api/"):
+        return False
+    return method in MUTATING_METHODS or path.startswith(JOURNALED_READ_PREFIXES)
 TRACE_HEADER = "X-Trace-Id"
 
 
@@ -148,7 +158,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers[TRACE_HEADER] = trace_id
 
-        if request.method in MUTATING_METHODS and request.url.path.startswith("/api/"):
+        if is_journaled(request.method, request.url.path):
             # Журнал не должен ломать ответ пользователю: сбой записи логируем.
             try:
                 enrichment = request.state.audit

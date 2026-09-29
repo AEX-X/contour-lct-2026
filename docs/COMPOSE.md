@@ -67,7 +67,9 @@ PowerShell, если данные не в `ml-data/`:
 
 Порядок старта соблюдается сам: `app` ждёт, пока `ml` загрузит журнал и начнёт отвечать на `/health`. Это важно: backend запрашивает прогнозы один раз при старте. На полном журнале загрузка ML и первичный расчёт рисков занимают от десятков секунд до нескольких минут; в Full overlay для этого задан отдельный 15-минутный healthcheck start period. Первая сборка образа ML с установкой зависимостей тоже может занять несколько минут
 
-Проверка: `GET https://localhost:8443/api/v1/risks` под `manager`. Прогнозы моделей видны по полю `model`: `hgb-v2-run002-…` — по датчикам, `hgb-object-run008-…` и `hgb-object-run009-…` — по объектам (`target.type = "facility"`).
+Проверка: `GET https://localhost:8443/api/v1/risks` под `manager`. Прогнозы моделей видны по полю `model`: `hgb-v2-run002-…` — по датчикам, `hgb-object-run008-…` и `hgb-object-run009-…` — по объектам (`target.type = "facility"`); у объектных рисков заполнены `verdict` и `blind_spots`. `GET /api/v1/model-quality` отдаёт метрики с заголовком `X-Data-Source: ml_service`.
+
+Вкладка «Качество модели» работает и без ML-сервиса: в Lite режиме `/model-quality` отдаёт тот же файл метрик из `ml/` (`X-Data-Source: file`).
 
 ### Временный командный preview
 
