@@ -56,6 +56,57 @@ function Test-PreviewUrl {
     }
 }
 
+function Test-PreviewApiSession {
+    param(
+        [string]$Url,
+        [int]$TimeoutSeconds = 15
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        return $false
+    }
+
+    $token = $null
+    try {
+        $loginBody = @{ username = "manager"; password = "manager123" } | ConvertTo-Json
+        $session = Invoke-RestMethod `
+            -Method Post `
+            -Uri "$Url/api/v1/auth/login" `
+            -ContentType "application/json" `
+            -Body $loginBody `
+            -TimeoutSec $TimeoutSeconds
+        $token = [string]$session.token
+        if ([string]::IsNullOrWhiteSpace($token)) {
+            return $false
+        }
+
+        $headers = @{ Authorization = "Bearer $token" }
+        $currentUser = Invoke-RestMethod `
+            -Method Get `
+            -Uri "$Url/api/v1/me" `
+            -Headers $headers `
+            -TimeoutSec $TimeoutSeconds
+        return $currentUser.role -eq "manager"
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if (-not [string]::IsNullOrWhiteSpace($token)) {
+            try {
+                Invoke-RestMethod `
+                    -Method Post `
+                    -Uri "$Url/api/v1/auth/logout" `
+                    -Headers @{ Authorization = "Bearer $token" } `
+                    -TimeoutSec $TimeoutSeconds | Out-Null
+            }
+            catch {
+                # A failed cleanup must not hide the readiness result.
+            }
+        }
+    }
+}
+
 try {
     $health = Invoke-RestMethod -Uri "$baseUrl/health" -SkipCertificateCheck -TimeoutSec 10
 }
@@ -68,24 +119,14 @@ if ($health.status -ne "ok") {
 
 Write-Host "Запуск временного публичного preview-туннеля" -ForegroundColor Cyan
 try {
-    # Start only the two preview services. Compose builds the tunnel image on
-    # the first run; an already running tunnel keeps its current public URL.
-    # The Full stack was checked above and must not be recreated here.
+    # Start only the two preview services. The Full stack was checked above
+    # and must not be recreated here. Anonymous localhost.run routes are
+    # short-lived, so every explicit start gets a fresh tunnel and URL.
     Invoke-ContourDocker -Arguments ($composeArgs + @(
         "up", "-d", "--no-deps", "--wait", "--wait-timeout", "60", "preview-gateway"
     ))
+    Invoke-ContourDocker -Arguments ($composeArgs + @("rm", "-f", "-s", "preview"))
     Invoke-ContourDocker -Arguments ($composeArgs + @("up", "-d", "--no-deps", "preview"))
-
-    # An anonymous localhost.run edge route can expire while the SSH process
-    # remains alive. Recreate only the tunnel when its published URL is stale.
-    $existingLogLines = & docker @composeArgs logs --no-color --no-log-prefix --tail 100 preview 2>&1
-    $existingPreviewUrl = Get-PreviewUrl -LogLines $existingLogLines
-    if (-not [string]::IsNullOrWhiteSpace($existingPreviewUrl) -and
-        -not (Test-PreviewUrl -Url $existingPreviewUrl)) {
-        Write-Warning "Существующий preview-туннель недоступен. Получаю новый временный адрес"
-        Invoke-ContourDocker -Arguments ($composeArgs + @("rm", "-f", "-s", "preview"))
-        Invoke-ContourDocker -Arguments ($composeArgs + @("up", "-d", "--no-deps", "preview"))
-    }
 }
 catch {
     & docker @composeArgs rm -f -s preview *> $null
@@ -102,7 +143,8 @@ while ([DateTimeOffset]::UtcNow -lt $deadline) {
     $lastLogs = $logLines -join [Environment]::NewLine
     $previewUrl = Get-PreviewUrl -LogLines $logLines
 
-    if (Test-PreviewUrl -Url $previewUrl -TimeoutSeconds 15) {
+    if ((Test-PreviewUrl -Url $previewUrl -TimeoutSeconds 15) -and
+        (Test-PreviewApiSession -Url $previewUrl -TimeoutSeconds 15)) {
         $previewReady = $true
         break
     }
