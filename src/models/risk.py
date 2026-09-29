@@ -7,7 +7,16 @@ left as an honest placeholder.
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base
@@ -75,6 +84,23 @@ class RiskDecision(Base):
     reason_code: Mapped[str | None] = mapped_column(String, nullable=True)
     comment: Mapped[str | None] = mapped_column(String, nullable=True)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RiskConfirmMutation(Base):
+    """Durable reply for an idempotent risk confirmation."""
+
+    __tablename__ = "risk_confirm_mutations"
+    __table_args__ = (
+        UniqueConstraint("actor_id", "idempotency_key", name="uq_risk_confirm_actor_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    risk_id: Mapped[str] = mapped_column(ForeignKey("risks.id"), index=True)
+    actor_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String)
+    fingerprint: Mapped[str] = mapped_column(String)
+    response_payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class RiskSyncState(Base):

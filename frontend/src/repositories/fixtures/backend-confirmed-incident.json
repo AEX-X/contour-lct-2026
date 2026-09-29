@@ -1,0 +1,87 @@
+{
+  "events": {
+    "data": [
+      {
+        "id": "evt_inc_20260929090325432798_17aea9",
+        "event_type": "fire",
+        "source": "risk_confirmation",
+        "facility_id": "fac_5122",
+        "sensor_id": "sensor_risk_cf_dd68f7be95",
+        "occurred_at": "2026-09-29T09:03:25.432798Z",
+        "ingested_at": "2026-09-29T09:03:25.432798Z",
+        "state": "warning",
+        "value": "Прогноз проверен диспетчером. Требуется выезд",
+        "is_confirmed_incident": true,
+        "verification_result": "confirmed",
+        "resolved_at": null,
+        "related_risk_id": "risk_cf_dd68f7be95"
+      }
+    ],
+    "meta": {
+      "next_cursor": null,
+      "total": 1,
+      "generated_at": "2026-09-29T09:03:25.611394Z"
+    }
+  },
+  "risk": {
+    "id": "risk_cf_dd68f7be95",
+    "forecast_id": "risk_cf_dd68f7be95",
+    "risk_type": "fire",
+    "target": {
+      "type": "sensor",
+      "id": "sensor_risk_cf_dd68f7be95",
+      "facility_id": "fac_5122"
+    },
+    "as_of": "2041-01-01T00:00:00Z",
+    "demo_clock": null,
+    "is_invalidated": false,
+    "lead_min_hours": 2,
+    "horizon_hours": 6,
+    "prediction_window": {
+      "start": "2041-01-01T02:00:00Z",
+      "end": "2041-01-01T08:00:00Z"
+    },
+    "probability": 0.8,
+    "threshold": 0.6,
+    "alert": null,
+    "model_threshold": null,
+    "verdict": null,
+    "blind_spots": [],
+    "risk_level": "high",
+    "priority_score": 70,
+    "decision_status": "confirmed",
+    "sla_due_at": "2041-01-01T01:00:00Z",
+    "data_health": "fresh",
+    "model": "test",
+    "top_factors": [
+      "f"
+    ],
+    "recommendation": "r",
+    "version": 2,
+    "created_at": "2041-01-01T00:00:00Z",
+    "updated_at": "2026-09-29T09:03:25.432798Z"
+  },
+  "incident": {
+    "id": "evt_inc_20260929090325432798_17aea9",
+    "version": 1,
+    "facility_id": "fac_5122",
+    "target": {
+      "type": "sensor",
+      "id": "sensor_risk_cf_dd68f7be95",
+      "facility_id": "fac_5122",
+      "display_name": "sensor_risk_cf_dd68f7be95"
+    },
+    "source_risk_id": "risk_cf_dd68f7be95",
+    "title": "Подтверждена необходимость проверки: sensor_risk_cf_dd68f7be95",
+    "description": "Прогноз проверен диспетчером. Требуется выезд",
+    "severity": "high",
+    "status": "open",
+    "confirmed_at": "2026-09-29T09:03:25.432798Z",
+    "confirmed_by": {
+      "id": "usr_dispatcher",
+      "display_name": "Диспетчер объекта (демо)"
+    },
+    "resolved_at": null,
+    "failure_episode_id": null
+  }
+}

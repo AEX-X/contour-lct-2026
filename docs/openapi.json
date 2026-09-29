@@ -1876,6 +1876,75 @@
         }
       }
     },
+    "/api/v1/risks/{risk_id}/confirm": {
+      "post": {
+        "tags": [
+          "risks"
+        ],
+        "summary": "Confirm Risk As Incident",
+        "description": "Confirm a risk forecast as an incident.\n\nSets the risk's decision_status to \"confirmed\", registers the incident in\nthe event journal (GET /api/v1/events?is_confirmed_incident=true) and\nwrites a domain audit entry. With idempotency_key the same request\nreplays the first reply instead of creating a second incident.\n\nArgs:\n    risk_id: The risk to confirm.\n    body: expected_version, comment, and optional idempotency_key with\n        client_occurred_at (both or neither).\n    request: The request, for the trace id and audit enrichment.\n    user: The authenticated caller, injected by require_permission.\n\nReturns:\n    The updated risk, the incident and the domain audit event id.\n\nRaises:\n    ApiError: 422 if only one idempotency field is given; 404/403 per\n        scope; 409 VERSION_CONFLICT (details.current), INVALID_TRANSITION\n        when a decision is already final, IDEMPOTENCY_KEY_REUSED.",
+        "operationId": "confirm_risk_as_incident_api_v1_risks__risk_id__confirm_post",
+        "parameters": [
+          {
+            "name": "risk_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Risk Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiskConfirmResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/work-orders": {
       "post": {
         "tags": [
@@ -2720,6 +2789,88 @@
         }
       }
     },
+    "/api/v1/analytics/daily-trend": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "summary": "Get Daily Trend",
+        "description": "Per-day confirmed incidents, new risk forecasts and closed work orders.\n\nDays are Moscow calendar days; every day of the period is present, zero\nwhen nothing happened. Counts are limited to the caller's scope.\n\nArgs:\n    from_: First day, YYYY-MM-DD, inclusive (default: 6 days before to).\n    to: Last day, YYYY-MM-DD, inclusive (default: today in Moscow, or\n        6 days after from when only from is given).\n    user: The authenticated caller, injected by require_permission.\n\nReturns:\n    {data: [{day, incidents, risks, closed}], meta: {from, to, timezone,\n    generated_at}}.\n\nRaises:\n    ApiError: 400 for a malformed or too long period; 403 without\n        analytics.read.summary.",
+        "operationId": "get_daily_trend_api_v1_analytics_daily_trend_get",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DailyTrendEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health",
@@ -3244,6 +3395,52 @@
         "title": "ConfigMeta",
         "description": "Envelope metadata for the config bundle response."
       },
+      "ConfirmRequest": {
+        "properties": {
+          "expected_version": {
+            "type": "integer",
+            "title": "Expected Version"
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Comment"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 8
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "client_occurred_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Occurred At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "expected_version",
+          "comment"
+        ],
+        "title": "ConfirmRequest",
+        "description": "Body for POST /api/v1/risks/{risk_id}/confirm.\n\nidempotency_key and client_occurred_at come together or not at all,\nthe same rule as work-order mutations (enforced by the endpoint)."
+      },
       "CreateWorkOrderRequest": {
         "properties": {
           "mode": {
@@ -3391,6 +3588,27 @@
         ],
         "title": "CurrentReading",
         "description": "The most recent reading for a sensor, if any exist yet."
+      },
+      "DailyTrendEnvelope": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/TrendDayOut"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/TrendMeta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "DailyTrendEnvelope",
+        "description": "The standard {data, meta} envelope for the daily trend."
       },
       "DataHealth": {
         "properties": {
@@ -4167,6 +4385,137 @@
         "title": "HierarchyNodeOut",
         "description": "One node of a facility's hierarchy tree.\n\n``sensor_count`` contains real linked sensor channels at this node or any\ndescendant. ``attention_count`` is the subset with a usable latest state\nof warning, fault, or alarm. ``current_state`` is the worst descendant\ntelemetry state; missing or unavailable telemetry is unknown rather than\nan invented fault. ``risk_level`` remains unknown until risks have an\nunambiguous hierarchy-node binding. Tree/path fields are computed from the\nactual adjacency-list data."
       },
+      "IncidentOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "facility_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facility Id"
+          },
+          "target": {
+            "$ref": "#/components/schemas/IncidentTarget"
+          },
+          "source_risk_id": {
+            "type": "string",
+            "title": "Source Risk Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "confirmed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Confirmed At"
+          },
+          "confirmed_by": {
+            "$ref": "#/components/schemas/UserRef"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "failure_episode_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Episode Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "facility_id",
+          "target",
+          "source_risk_id",
+          "title",
+          "description",
+          "severity",
+          "status",
+          "confirmed_at",
+          "confirmed_by",
+          "resolved_at",
+          "failure_episode_id"
+        ],
+        "title": "IncidentOut",
+        "description": "A confirmed incident; its id is the Event id in GET /api/v1/events."
+      },
+      "IncidentTarget": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "facility_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facility Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "facility_id",
+          "display_name"
+        ],
+        "title": "IncidentTarget",
+        "description": "The confirmed incident's target, taken from the source risk."
+      },
       "Incidents": {
         "properties": {
           "open_count": {
@@ -4931,6 +5280,28 @@
           "author"
         ],
         "title": "RepairResultOut"
+      },
+      "RiskConfirmResponse": {
+        "properties": {
+          "risk": {
+            "$ref": "#/components/schemas/RiskOut"
+          },
+          "incident": {
+            "$ref": "#/components/schemas/IncidentOut"
+          },
+          "audit_event_id": {
+            "type": "string",
+            "title": "Audit Event Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "risk",
+          "incident",
+          "audit_event_id"
+        ],
+        "title": "RiskConfirmResponse",
+        "description": "Reply of POST /api/v1/risks/{risk_id}/confirm."
       },
       "RiskLevelThreshold": {
         "properties": {
@@ -5920,6 +6291,68 @@
         "title": "Threshold",
         "description": "A named threshold value (always empty for MVP -- see module docstring)."
       },
+      "TrendDayOut": {
+        "properties": {
+          "day": {
+            "type": "string",
+            "format": "date",
+            "title": "Day"
+          },
+          "incidents": {
+            "type": "integer",
+            "title": "Incidents"
+          },
+          "risks": {
+            "type": "integer",
+            "title": "Risks"
+          },
+          "closed": {
+            "type": "integer",
+            "title": "Closed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "incidents",
+          "risks",
+          "closed"
+        ],
+        "title": "TrendDayOut",
+        "description": "Counts for one Moscow calendar day."
+      },
+      "TrendMeta": {
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "title": "From"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "title": "To"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "timezone",
+          "generated_at"
+        ],
+        "title": "TrendMeta",
+        "description": "The resolved period and when the numbers were computed."
+      },
       "UnitOfMeasure": {
         "properties": {
           "id": {
@@ -5943,6 +6376,25 @@
         ],
         "title": "UnitOfMeasure",
         "description": "A unit of measurement used by numeric sensor readings."
+      },
+      "UserRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "title": "UserRef",
+        "description": "A user reference: id and display name."
       },
       "UserRefOut": {
         "properties": {

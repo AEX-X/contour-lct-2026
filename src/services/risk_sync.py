@@ -101,7 +101,12 @@ async def sync_risks(session: AsyncSession, predictor: MLPredictor, *, now: date
         rows = (
             await session.execute(
                 select(Event)
-                .where(Event.id > state.last_synced_event_id, Event.related_risk_id.is_(None))
+                .where(
+                    Event.id > state.last_synced_event_id,
+                    Event.related_risk_id.is_(None),
+                    # Только события датчиков: инциденты без показания не двигают high-water mark.
+                    Event.source_reading_id.is_not(None),
+                )
                 .order_by(Event.id)
                 .limit(_BATCH_SIZE)
             )

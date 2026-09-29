@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.analytics import router as analytics_router
 from src.api.audit import router as audit_router
 from src.api.auth import router as auth_router
 from src.api.config import router as config_router
@@ -110,6 +111,7 @@ app.include_router(work_orders_router)
 app.include_router(audit_router)
 app.include_router(model_quality_router)
 app.include_router(reports_router)
+app.include_router(analytics_router)
 
 
 @app.get("/health")

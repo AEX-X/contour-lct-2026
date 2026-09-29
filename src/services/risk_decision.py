@@ -39,12 +39,21 @@ async def apply_decision(
         The updated Risk.
 
     Raises:
-        ApiError: 409 CONFLICT if expected_version does not match the
+        ApiError: 409 INVALID_TRANSITION if the risk is already confirmed as
+            an incident; 409 CONFLICT if expected_version does not match the
             risk's current version -- `details.current` carries the
             risk's current (not stale) serialized state.
     """
     now = now or datetime.now(timezone.utc)
 
+    if risk.decision_status == "confirmed":
+        # Инцидент уже зарегистрирован: отклонить или отложить прогноз нельзя.
+        raise ApiError(
+            409,
+            "INVALID_TRANSITION",
+            "Прогноз уже подтверждён как инцидент",
+            details={"current": to_risk_out(risk).model_dump(mode="json")},
+        )
     if risk.version != expected_version:
         raise ApiError(
             409,

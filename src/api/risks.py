@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from src.db import async_session_factory
 from src.deps.auth import require_permission
@@ -10,13 +10,16 @@ from src.errors import ApiError
 from src.models.auth import User
 from src.schemas.risk import (
     AcknowledgeRequest,
+    ConfirmRequest,
     DeferRequest,
     RejectRequest,
     RiskListEnvelope,
+    RiskConfirmResponse,
     RiskListMeta,
     RiskOut,
 )
 from src.services.reference_data import REJECT_REASONS
+from src.services.risk_confirmation import confirm_risk
 from src.services.risk_decision import apply_decision
 from src.services.risk_query import get_risk_detail, list_risks, to_risk_out
 from src.services.scope import resolve_scope
@@ -246,3 +249,60 @@ async def defer_risk(
             session, risk, user, "deferred", body.expected_version
         )
         return to_risk_out(updated)
+
+
+@router.post("/risks/{risk_id}/confirm", response_model=RiskConfirmResponse)
+async def confirm_risk_as_incident(
+    risk_id: str,
+    body: ConfirmRequest,
+    request: Request,
+    user: User = Depends(require_permission("risk.confirm")),
+) -> RiskConfirmResponse:
+    """Confirm a risk forecast as an incident.
+
+    Sets the risk's decision_status to "confirmed", registers the incident in
+    the event journal (GET /api/v1/events?is_confirmed_incident=true) and
+    writes a domain audit entry. With idempotency_key the same request
+    replays the first reply instead of creating a second incident.
+
+    Args:
+        risk_id: The risk to confirm.
+        body: expected_version, comment, and optional idempotency_key with
+            client_occurred_at (both or neither).
+        request: The request, for the trace id and audit enrichment.
+        user: The authenticated caller, injected by require_permission.
+
+    Returns:
+        The updated risk, the incident and the domain audit event id.
+
+    Raises:
+        ApiError: 422 if only one idempotency field is given; 404/403 per
+            scope; 409 VERSION_CONFLICT (details.current), INVALID_TRANSITION
+            when a decision is already final, IDEMPOTENCY_KEY_REUSED.
+    """
+    if (body.idempotency_key is None) != (body.client_occurred_at is None):
+        raise ApiError(
+            422,
+            "DOMAIN_VALIDATION_ERROR",
+            "idempotency_key и client_occurred_at должны передаваться вместе",
+        )
+    async with async_session_factory() as session:
+        scope = await resolve_scope(session, user.id)
+        allowed_ids = (
+            None if scope["type"] == "all_facilities" else set(scope["facility_ids"])
+        )
+        outcome = await confirm_risk(
+            session,
+            risk_id,
+            allowed_ids,
+            user,
+            body,
+            trace_id=getattr(request.state, "trace_id", ""),
+        )
+    request.state.audit["target_type"] = "risk"
+    request.state.audit["target_id"] = risk_id
+    request.state.audit["details"] = {
+        "incident_id": outcome.response.incident.id,
+        "replayed": outcome.replayed,
+    }
+    return outcome.response

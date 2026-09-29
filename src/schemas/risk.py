@@ -98,3 +98,58 @@ class RejectRequest(BaseModel):
     expected_version: int
     reason_code: str | None = None
     comment: str | None = None
+
+
+class ConfirmRequest(BaseModel):
+    """Body for POST /api/v1/risks/{risk_id}/confirm.
+
+    idempotency_key and client_occurred_at come together or not at all,
+    the same rule as work-order mutations (enforced by the endpoint).
+    """
+
+    expected_version: int
+    comment: str = Field(min_length=1, max_length=2000)
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=200)
+    client_occurred_at: datetime | None = None
+
+
+class UserRef(BaseModel):
+    """A user reference: id and display name."""
+
+    id: str
+    display_name: str
+
+
+class IncidentTarget(BaseModel):
+    """The confirmed incident's target, taken from the source risk."""
+
+    type: str
+    id: str
+    facility_id: str | None
+    display_name: str
+
+
+class IncidentOut(BaseModel):
+    """A confirmed incident; its id is the Event id in GET /api/v1/events."""
+
+    id: str
+    version: int
+    facility_id: str | None
+    target: IncidentTarget
+    source_risk_id: str
+    title: str
+    description: str
+    severity: str
+    status: str
+    confirmed_at: datetime
+    confirmed_by: UserRef
+    resolved_at: datetime | None
+    failure_episode_id: str | None
+
+
+class RiskConfirmResponse(BaseModel):
+    """Reply of POST /api/v1/risks/{risk_id}/confirm."""
+
+    risk: RiskOut
+    incident: IncidentOut
+    audit_event_id: str
