@@ -734,6 +734,23 @@ export interface ModelQualityReport {
   models: ModelQualityModel[]
 }
 
+export interface AnalyticsDailyTrendPoint {
+  day: string
+  incidents: number
+  risks: number
+  closed: number
+}
+
+export interface AnalyticsDailyTrend {
+  points: AnalyticsDailyTrendPoint[]
+  period: {
+    from: string
+    to: string
+  }
+  timezone: string
+  generatedAt: ISODateTime
+}
+
 export type SourceHealthStatus = 'online' | 'delayed' | 'unavailable'
 
 export interface SourceHealthEntry {

@@ -143,6 +143,23 @@ export function useDashboardMetrics() {
   });
 }
 
+export function useDailyTrend(
+  period?: { from?: string; to?: string },
+  enabled = true,
+) {
+  const { repository, currentUser } = useContour();
+  return useQuery({
+    queryKey: contourKeys.dailyTrend(currentUser.id, period),
+    queryFn: () => {
+      if (!repository.getDailyTrend) throw new Error("Динамика событий недоступна в текущем режиме");
+      return repository.getDailyTrend(period);
+    },
+    enabled: enabled && Boolean(repository.getDailyTrend),
+    retry: false,
+    staleTime: 60_000,
+  });
+}
+
 export function useReferenceConfig() {
   const { repository } = useContour();
   return useQuery({

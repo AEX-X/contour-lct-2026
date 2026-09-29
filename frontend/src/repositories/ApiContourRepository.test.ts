@@ -24,10 +24,12 @@ const mePayload = {
     'risk.read',
     'risk.acknowledge',
     'risk.resolve',
+    'risk.confirm',
     'work_order.read',
     'work_order.create_draft',
     'audit.read',
     'analytics.read.technical',
+    'analytics.read.summary',
     'report.export',
   ],
   scope: { type: 'all_facilities' },
@@ -230,6 +232,57 @@ function createBackendFetch() {
     if (url === '/api/v1/risks/risk-1/defer') {
       expect(JSON.parse(String(init?.body))).toEqual({ expected_version: 3 })
       return json({ ...riskPayload, decision_status: 'deferred', version: 4 })
+    }
+    if (url === '/api/v1/risks/risk-1/confirm') {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        expected_version: 3,
+        comment: 'Прогноз подтверждён после проверки',
+        idempotency_key: 'risk-1:3:confirm',
+        client_occurred_at: '2026-09-29T09:00:00Z',
+      })
+      return json({
+        risk: {
+          ...riskPayload,
+          decision_status: 'confirmed',
+          version: 4,
+          updated_at: '2026-09-29T09:00:00Z',
+        },
+        incident: {
+          id: 'incident-1',
+          version: 1,
+          facility_id: 'fac-1',
+          target: {
+            type: 'facility',
+            id: 'fac-1',
+            facility_id: 'fac-1',
+            display_name: 'Коллектор № 1',
+          },
+          source_risk_id: 'risk-1',
+          title: 'Подтверждён риск подтопления',
+          description: 'Прогноз подтверждён после проверки',
+          severity: 'high',
+          status: 'open',
+          confirmed_at: '2026-09-29T09:00:00Z',
+          confirmed_by: { id: 'usr-manager', display_name: 'Руководитель смены' },
+          resolved_at: null,
+          failure_episode_id: null,
+        },
+        audit_event_id: 'audit-risk-confirm-1',
+      })
+    }
+    if (url === '/api/v1/analytics/daily-trend') {
+      return json({
+        data: [
+          { day: '2026-09-28', incidents: 1, risks: 4, closed: 2 },
+          { day: '2026-09-29', incidents: 2, risks: 3, closed: 5 },
+        ],
+        meta: {
+          from: '2026-09-28',
+          to: '2026-09-29',
+          timezone: 'Europe/Moscow',
+          generated_at: '2026-09-29T09:10:00Z',
+        },
+      })
     }
     if (url === '/api/v1/work-orders') {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
@@ -586,6 +639,94 @@ describe('ApiContourRepository', () => {
 
     expect(rejected).toMatchObject({ status: 'rejected', version: 4 })
     expect(deferred).toMatchObject({ status: 'deferred', version: 4 })
+  })
+
+  it('confirms a forecast and maps the incident returned by backend', async () => {
+    const repository = createApiContourRepository({
+      baseUrl: '/api/v1',
+      fetcher: createBackendFetch() as typeof fetch,
+      storage: createMemoryStorage(),
+    })
+    await repository.login!({ username: 'manager', password: 'secret' })
+
+    const result = await repository.confirmRisk('risk-1', {
+      expectedVersion: 3,
+      comment: 'Прогноз подтверждён после проверки',
+      idempotencyKey: 'risk-1:3:confirm',
+      clientOccurredAt: '2026-09-29T09:00:00Z',
+    })
+
+    expect(result.risk).toMatchObject({ id: 'risk-1', status: 'confirmed', version: 4 })
+    expect(result.incident).toMatchObject({
+      id: 'incident-1',
+      facilityId: 'fac-1',
+      sourceRiskId: 'risk-1',
+      title: 'Подтверждён риск подтопления',
+      confirmedBy: { id: 'usr-manager', displayName: 'Руководитель смены' },
+    })
+    expect(result.auditEventId).toBe('audit-risk-confirm-1')
+  })
+
+  it('preserves the current risk when confirmation loses an optimistic-lock race', async () => {
+    const baseFetch = createBackendFetch()
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/v1/risks/risk-1/confirm') {
+        return json({
+          error: {
+            code: 'VERSION_CONFLICT',
+            message: 'Версия прогноза устарела, обновите карточку',
+            trace_id: 'trace-confirm-conflict',
+            details: {
+              current: {
+                ...riskPayload,
+                decision_status: 'acknowledged',
+                version: 8,
+                updated_at: '2026-09-29T09:05:00Z',
+              },
+            },
+          },
+        }, 409)
+      }
+      return baseFetch(input, init)
+    })
+    const repository = createApiContourRepository({
+      baseUrl: '/api/v1',
+      fetcher: fetcher as typeof fetch,
+      storage: createMemoryStorage(),
+    })
+    await repository.login!({ username: 'manager', password: 'secret' })
+
+    await expect(repository.confirmRisk('risk-1', {
+      expectedVersion: 3,
+      comment: 'Прогноз подтверждён после проверки',
+      idempotencyKey: 'risk-1:3:confirm',
+      clientOccurredAt: '2026-09-29T09:00:00Z',
+    })).rejects.toMatchObject({
+      code: 'VERSION_CONFLICT',
+      currentVersion: 8,
+      currentRisk: { id: 'risk-1', status: 'acknowledged', version: 8 },
+    })
+  })
+
+  it('loads the scoped daily analytics trend without demo substitution', async () => {
+    const repository = createApiContourRepository({
+      baseUrl: '/api/v1',
+      fetcher: createBackendFetch() as typeof fetch,
+      storage: createMemoryStorage(),
+    })
+    await repository.login!({ username: 'manager', password: 'secret' })
+
+    const trend = await repository.getDailyTrend!()
+
+    expect(trend).toEqual({
+      points: [
+        { day: '2026-09-28', incidents: 1, risks: 4, closed: 2 },
+        { day: '2026-09-29', incidents: 2, risks: 3, closed: 5 },
+      ],
+      period: { from: '2026-09-28', to: '2026-09-29' },
+      timezone: 'Europe/Moscow',
+      generatedAt: '2026-09-29T09:10:00Z',
+    })
   })
 
   it('preserves the current risk card from an optimistic-lock conflict', async () => {

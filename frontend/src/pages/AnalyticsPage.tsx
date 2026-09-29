@@ -22,6 +22,7 @@ import {
 } from "recharts";
 import { Button, InlineAlert, KpiCard, SegmentedControl, StatusBadge } from "../shared/ui";
 import {
+  useDailyTrend,
   useDashboardMetrics,
   useFacilities,
   useModelQuality,
@@ -37,7 +38,7 @@ import { RiskReportExport } from "../components/RiskReportExport";
 
 type AnalyticsTab = "management" | "technical" | "model_quality" | "finance";
 
-const trendData = [
+const demoTrendData = [
   { day: "15 сен", incidents: 4, risks: 13, closed: 7 },
   { day: "16 сен", incidents: 3, risks: 15, closed: 8 },
   { day: "17 сен", incidents: 5, risks: 12, closed: 10 },
@@ -56,6 +57,10 @@ export function AnalyticsPage() {
   const facilitiesQuery = useFacilities();
   const risksQuery = useRisks();
   const ordersQuery = useWorkOrders();
+  const dailyTrendQuery = useDailyTrend(
+    undefined,
+    runtime.mode === "api" && currentUser.permissions.includes("analytics.management.read"),
+  );
   const modelQualityQuery = useModelQuality(tab === "model_quality" && canReadModelQuality);
 
   if (
@@ -102,6 +107,12 @@ export function AnalyticsPage() {
         !["draft", "closed", "cancelled"].includes(order.status),
     ).length,
   }));
+  const trendRows = runtime.mode === "mock"
+    ? demoTrendData
+    : (dailyTrendQuery.data?.points ?? []).map((point) => ({
+        ...point,
+        day: formatTrendDay(point.day),
+      }));
 
   return (
     <div className="page">
@@ -171,13 +182,31 @@ export function AnalyticsPage() {
                 <div>
                   <h2>Динамика событий и работ</h2>
                   <p className="page-header__meta">
-                    {runtime.mode === "api" ? "Текущий операционный срез по данным API" : "Статичный демонстрационный ряд за 15-21 сентября"}
+                    {runtime.mode === "api"
+                      ? dailyTrendQuery.data
+                        ? `${formatTrendPeriod(dailyTrendQuery.data.period.from, dailyTrendQuery.data.period.to)}, московское время`
+                        : "Последние 7 дней по данным backend"
+                      : "Статичный демонстрационный ряд за 15-21 сентября"}
                   </p>
                 </div>
               </header>
-              {runtime.mode === "mock" ? <><div className="surface__body chart-frame" aria-hidden="true">
+              {runtime.mode === "api" && dailyTrendQuery.isPending ? (
+                <div className="surface__body"><p className="muted">Загружаем динамику событий и работ</p></div>
+              ) : runtime.mode === "api" && dailyTrendQuery.isError ? (
+                <div className="surface__body">
+                  <InlineAlert
+                    tone="warning"
+                    title="Динамика временно недоступна"
+                    action={<Button variant="secondary" onClick={() => void dailyTrendQuery.refetch()}>Повторить запрос</Button>}
+                  >
+                    {dailyTrendQuery.error instanceof Error
+                      ? dailyTrendQuery.error.message
+                      : "Backend не вернул временной ряд"}
+                  </InlineAlert>
+                </div>
+              ) : trendRows.length ? <><div className="surface__body chart-frame" aria-hidden="true">
                 <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={trendData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+                  <AreaChart data={trendRows} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
                     <defs>
                       <linearGradient id="riskFill" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.24} />
@@ -189,21 +218,21 @@ export function AnalyticsPage() {
                     <YAxis allowDecimals={false} tick={{ fill: "#66758f", fontSize: 11 }} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ borderRadius: 8, borderColor: "#d8e1ed" }} />
                     <Legend />
-                    <Area type="monotone" name="Высокие риски" dataKey="risks" stroke="#7c3aed" fill="url(#riskFill)" strokeWidth={2} />
+                    <Area type="monotone" name="Новые прогнозы" dataKey="risks" stroke="#7c3aed" fill="url(#riskFill)" strokeWidth={2} />
                     <Area type="monotone" name="Закрыто заявок" dataKey="closed" stroke="#20aa60" fill="transparent" strokeWidth={2} />
                     <Area type="monotone" name="Инциденты" dataKey="incidents" stroke="#d7263d" fill="transparent" strokeWidth={2} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
               <div className="surface__body chart-data-companion">
-                <p>Этот сценарный ряд не пересчитывается после действий в текущей сессии. Актуальные значения показываются в KPI выше, точные точки ряда доступны в таблице</p>
+                <p>{runtime.mode === "api"
+                  ? `Каждая точка рассчитана backend в зоне видимости пользователя. Обновлено ${formatDateTime(dailyTrendQuery.data?.generatedAt)}`
+                  : "Этот сценарный ряд не пересчитывается после действий в текущей сессии. Актуальные значения показываются в KPI выше"}</p>
                 <details className="data-table-details">
                   <summary>Показать данные графика</summary>
-                  <div className="table-scroll"><table><thead><tr><th>День</th><th>Высокие риски</th><th>Закрыто заявок</th><th>Инциденты</th></tr></thead><tbody>{trendData.map((row) => <tr key={row.day}><td>{row.day}</td><td>{row.risks}</td><td>{row.closed}</td><td>{row.incidents}</td></tr>)}</tbody></table></div>
+                  <div className="table-scroll"><table><thead><tr><th>День</th><th>Новые прогнозы</th><th>Закрыто заявок</th><th>Инциденты</th></tr></thead><tbody>{trendRows.map((row) => <tr key={row.day}><td>{row.day}</td><td>{row.risks}</td><td>{row.closed}</td><td>{row.incidents}</td></tr>)}</tbody></table></div>
                 </details>
-              </div></> : <div className="surface__body">
-                <p className="muted">Текущие KPI выше рассчитаны по API. Временной ряд не подменяется демонстрационными точками</p>
-              </div>}
+              </div></> : <div className="surface__body"><p className="muted">За выбранный период событий и работ нет</p></div>}
             </section>
 
             <section className="surface">
@@ -374,6 +403,20 @@ export function AnalyticsPage() {
       </p>
     </div>
   );
+}
+
+function formatTrendDay(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return value;
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "short",
+    timeZone: "Europe/Moscow",
+  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+}
+
+function formatTrendPeriod(from: string, to: string) {
+  return `Период ${formatTrendDay(from)} - ${formatTrendDay(to)}`;
 }
 
 function detailedPercent(value: number) {

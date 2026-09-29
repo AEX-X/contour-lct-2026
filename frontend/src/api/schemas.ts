@@ -230,6 +230,36 @@ export const riskListSchema = z.object({
   meta: listMetaSchema,
 })
 
+export const confirmedIncidentSchema = z.object({
+  id: z.string(),
+  version: z.number().int().positive(),
+  facility_id: nullableString,
+  target: z.object({
+    type: z.string(),
+    id: z.string(),
+    facility_id: nullableString,
+    display_name: z.string(),
+  }),
+  source_risk_id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  severity: z.string(),
+  status: z.string(),
+  confirmed_at: isoDateTime,
+  confirmed_by: z.object({
+    id: z.string(),
+    display_name: z.string(),
+  }),
+  resolved_at: isoDateTime.nullable(),
+  failure_episode_id: nullableString,
+})
+
+export const riskConfirmResponseSchema = z.object({
+  risk: riskSchema,
+  incident: confirmedIncidentSchema,
+  audit_event_id: z.string(),
+})
+
 export const eventSchema = z.object({
   id: z.string(),
   event_type: z.string(),
@@ -551,6 +581,21 @@ export const sourceHealthSchema = z.object({
   meta: z.object({ generated_at: isoDateTime }),
 })
 
+export const dailyTrendSchema = z.object({
+  data: z.array(z.object({
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    incidents: z.number().int().nonnegative(),
+    risks: z.number().int().nonnegative(),
+    closed: z.number().int().nonnegative(),
+  })),
+  meta: z.object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    timezone: z.string(),
+    generated_at: isoDateTime,
+  }),
+})
+
 export type ApiFacility = z.infer<typeof facilitySchema>
 export type ApiHierarchyNode = z.infer<typeof hierarchyNodeSchema>
 export type ApiLayout = z.infer<typeof layoutSchema>
@@ -558,6 +603,7 @@ export type ApiSensorListItem = z.infer<typeof sensorListItemSchema>
 export type ApiSensorDetail = z.infer<typeof sensorDetailSchema>
 export type ApiSensorSeries = z.infer<typeof sensorSeriesSchema>
 export type ApiRisk = z.infer<typeof riskSchema>
+export type ApiConfirmedIncident = z.infer<typeof confirmedIncidentSchema>
 export type ApiEvent = z.infer<typeof eventSchema>
 export type ApiWorkOrder = z.infer<typeof workOrderSchema>
 export type ApiWorkOrderActionResponse = z.infer<typeof workOrderActionResponseSchema>
@@ -568,3 +614,4 @@ export type ApiAuditEntry = z.infer<typeof auditEntrySchema>
 export type ApiReferenceConfig = z.infer<typeof referenceConfigSchema>
 export type ApiModelQuality = z.infer<typeof modelQualitySchema>
 export type ApiSourceHealth = z.infer<typeof sourceHealthSchema>
+export type ApiDailyTrend = z.infer<typeof dailyTrendSchema>

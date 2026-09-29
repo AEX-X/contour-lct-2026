@@ -1,4 +1,5 @@
 import type {
+  AnalyticsDailyTrend,
   AssignFacilityDispatcherCommand,
   AssignFacilityDispatcherResponse,
   AuditEvent,
@@ -120,6 +121,7 @@ export interface ContourRepository {
   markNotificationRead(notificationId: string): Promise<Notification>
   getAuditTimeline(entityType: string, entityId: string): Promise<AuditEvent[]>
   getDashboardMetrics(): Promise<DashboardMetric[]>
+  getDailyTrend?(period?: { from?: string; to?: string }): Promise<AnalyticsDailyTrend>
   getReferenceConfig?(): Promise<ReferenceConfig>
   getModelQuality?(): Promise<ModelQualityReport>
   exportRiskReport?(options: RiskReportOptions): Promise<RiskReportDownload>

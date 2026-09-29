@@ -73,6 +73,7 @@ const createOrderSchema = z.object({
 type CreateOrderValues = z.infer<typeof createOrderSchema>;
 
 type RiskDecisionConflict =
+  | { action: "confirm"; currentRisk: RiskForecast; comment: string }
   | { action: "reject"; currentRisk: RiskForecast; reasonCode: string; comment: string }
   | { action: "defer"; currentRisk: RiskForecast };
 
@@ -97,6 +98,7 @@ export function FacilityPage({
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedRiskId, setSelectedRiskId] = useState<string | null>(null);
   const [selectedTargetKey, setSelectedTargetKey] = useState<string | null>(null);
+  const [confirmRiskId, setConfirmRiskId] = useState<string | null>(null);
   const [rejectRiskId, setRejectRiskId] = useState<string | null>(null);
   const [deferRiskId, setDeferRiskId] = useState<string | null>(null);
   const [decisionConflict, setDecisionConflict] = useState<RiskDecisionConflict | null>(null);
@@ -108,11 +110,26 @@ export function FacilityPage({
     workOrderId?: string;
   } | null>(null);
   const confirmRiskMutation = useMutation({
-    mutationFn: (risk: RiskForecast) => repository.confirmRisk(risk.id, {
+    mutationFn: ({ risk, comment }: { risk: RiskForecast; comment: string }) => repository.confirmRisk(risk.id, {
       ...commandMeta(risk.version, `${risk.id}:${risk.version}:confirm`),
-      comment: "Прогноз проверен диспетчером. Требуется выезд и инструментальная диагностика",
+      comment,
     }),
-    onSuccess: () => invalidateAll(),
+    onSuccess: async () => {
+      setConfirmRiskId(null);
+      setDecisionConflict(null);
+      await invalidateAll();
+    },
+    onError: async (error, variables) => {
+      if (error instanceof RepositoryError && error.code === "VERSION_CONFLICT" && error.currentRisk) {
+        setConfirmRiskId(null);
+        setDecisionConflict({
+          action: "confirm",
+          currentRisk: error.currentRisk,
+          comment: variables.comment,
+        });
+        await invalidateAll();
+      }
+    },
   });
   const acknowledgeRiskMutation = useMutation({
     mutationFn: (risk: RiskForecast) => {
@@ -365,7 +382,10 @@ export function FacilityPage({
 
       <div className="split-layout" style={{ marginTop: 16 }}>
         <div className="content-stack">
-          {confirmRiskMutation.isError ? (
+          {confirmRiskMutation.isError && !(
+            confirmRiskMutation.error instanceof RepositoryError &&
+            confirmRiskMutation.error.code === "VERSION_CONFLICT"
+          ) ? (
             <InlineAlert tone="critical" title="Не удалось подтвердить прогноз">
               {confirmRiskMutation.error instanceof Error
                 ? confirmRiskMutation.error.message
@@ -399,15 +419,17 @@ export function FacilityPage({
             <InlineAlert
               tone="warning"
               title="Прогноз изменил другой пользователь"
-              action={[
-                "new",
-                "acknowledged",
-              ].includes(decisionConflict.currentRisk.status) ? (
+              action={!['confirmed', 'rejected', 'resolved'].includes(decisionConflict.currentRisk.status) ? (
                 <Button
                   variant="secondary"
-                  loading={rejectRiskMutation.isPending || deferRiskMutation.isPending}
+                  loading={confirmRiskMutation.isPending || rejectRiskMutation.isPending || deferRiskMutation.isPending}
                   onClick={() => {
-                    if (decisionConflict.action === "reject") {
+                    if (decisionConflict.action === "confirm") {
+                      confirmRiskMutation.mutate({
+                        risk: decisionConflict.currentRisk,
+                        comment: decisionConflict.comment,
+                      });
+                    } else if (decisionConflict.action === "reject") {
                       rejectRiskMutation.mutate({
                         risk: decisionConflict.currentRisk,
                         reasonCode: decisionConflict.reasonCode,
@@ -438,13 +460,16 @@ export function FacilityPage({
                     canAcknowledge={Boolean(repository.acknowledgeRisk) && currentUser.permissions.includes("risk.acknowledge")}
                     canReject={Boolean(repository.rejectRisk) && currentUser.permissions.includes("risk.reject")}
                     canDefer={Boolean(repository.deferRisk) && currentUser.permissions.includes("risk.defer")}
-                    confirming={confirmRiskMutation.isPending && confirmRiskMutation.variables?.id === risk.id}
+                    confirming={confirmRiskMutation.isPending && confirmRiskMutation.variables?.risk.id === risk.id}
                     acknowledging={acknowledgeRiskMutation.isPending && acknowledgeRiskMutation.variables?.id === risk.id}
                     rejecting={rejectRiskMutation.isPending && rejectRiskMutation.variables?.risk.id === risk.id}
                     deferring={deferRiskMutation.isPending && deferRiskMutation.variables?.id === risk.id}
                     hasIncident={incidents.some((incident) => incident.sourceRiskId === risk.id && incident.status !== "resolved")}
                     linkedOrders={orders.filter((order) => order.source.type === "risk" && order.source.id === risk.id)}
-                    onConfirm={() => confirmRiskMutation.mutate(risk)}
+                    onConfirm={() => {
+                      confirmRiskMutation.reset();
+                      setConfirmRiskId(risk.id);
+                    }}
                     onAcknowledge={() => acknowledgeRiskMutation.mutate(risk)}
                     onReject={() => {
                       rejectRiskMutation.reset();
@@ -472,13 +497,16 @@ export function FacilityPage({
                 canAcknowledge={Boolean(repository.acknowledgeRisk) && currentUser.permissions.includes("risk.acknowledge")}
                 canReject={Boolean(repository.rejectRisk) && currentUser.permissions.includes("risk.reject")}
                 canDefer={Boolean(repository.deferRisk) && currentUser.permissions.includes("risk.defer")}
-                confirming={confirmRiskMutation.isPending && confirmRiskMutation.variables?.id === topRisk.id}
+                confirming={confirmRiskMutation.isPending && confirmRiskMutation.variables?.risk.id === topRisk.id}
                 acknowledging={acknowledgeRiskMutation.isPending && acknowledgeRiskMutation.variables?.id === topRisk.id}
                 rejecting={rejectRiskMutation.isPending && rejectRiskMutation.variables?.risk.id === topRisk.id}
                 deferring={deferRiskMutation.isPending && deferRiskMutation.variables?.id === topRisk.id}
                 hasIncident={incidents.some((incident) => incident.sourceRiskId === topRisk.id && incident.status !== "resolved")}
                 linkedOrders={orders.filter((order) => order.source.type === "risk" && order.source.id === topRisk.id)}
-                onConfirm={() => confirmRiskMutation.mutate(topRisk)}
+                onConfirm={() => {
+                  confirmRiskMutation.reset();
+                  setConfirmRiskId(topRisk.id);
+                }}
                 onAcknowledge={() => acknowledgeRiskMutation.mutate(topRisk)}
                 onReject={() => {
                   rejectRiskMutation.reset();
@@ -723,6 +751,22 @@ export function FacilityPage({
           navigate(`/work-orders/${submitted.workOrder.id}`);
         }}
       />
+      <ConfirmRiskModal
+        key={confirmRiskId ?? "closed"}
+        open={Boolean(confirmRiskId)}
+        risk={risks.find((risk) => risk.id === confirmRiskId) ?? null}
+        submitting={confirmRiskMutation.isPending}
+        error={confirmRiskMutation.isError && confirmRiskMutation.error instanceof Error
+          ? confirmRiskMutation.error.message
+          : null}
+        onClose={() => {
+          if (!confirmRiskMutation.isPending) setConfirmRiskId(null);
+        }}
+        onConfirm={(comment) => {
+          const risk = risks.find((item) => item.id === confirmRiskId);
+          if (risk) confirmRiskMutation.mutate({ risk, comment });
+        }}
+      />
       <RejectRiskModal
         key={rejectRiskId ?? "closed"}
         open={Boolean(rejectRiskId)}
@@ -804,6 +848,7 @@ function RiskPanel({
   modelAlertRule?: ReferenceConfig["modelAlertRule"];
 }) {
   const canResolve = ["new", "acknowledged"].includes(risk.status);
+  const canConfirmTransition = ["new", "acknowledged", "deferred"].includes(risk.status);
   return (
     <section className="surface risk-panel">
       <header className="surface__header">
@@ -854,7 +899,7 @@ function RiskPanel({
                 Принять в работу
               </Button>
             ) : null}
-            {risk.status !== "confirmed" && canConfirm ? (
+            {canConfirmTransition && canConfirm ? (
               <Button startIcon={<CheckCircle size={18} />} loading={confirming} onClick={onConfirm}>
                 Подтвердить прогноз
               </Button>
@@ -915,6 +960,87 @@ function RiskPanel({
         ) : null}
       </div>
     </section>
+  );
+}
+
+function ConfirmRiskModal({
+  open,
+  risk,
+  submitting,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  risk: RiskForecast | null;
+  submitting: boolean;
+  error: string | null;
+  onClose: () => void;
+  onConfirm: (comment: string) => void;
+}) {
+  const [comment, setComment] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const submit = () => {
+    const normalizedComment = comment.trim();
+    if (!normalizedComment) {
+      setLocalError("Опиши результат проверки, чтобы инженер и диспетчеры понимали основание решения");
+      return;
+    }
+    setLocalError(null);
+    onConfirm(normalizedComment);
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Подтвердить прогноз как инцидент?"
+      description={risk ? `${risk.predictedEvent}, вероятность ${formatPercent(risk.probability)}` : undefined}
+      closeOnBackdrop={!submitting}
+      closeOnEscape={!submitting}
+      footer={
+        <div className="inline-actions" style={{ justifyContent: "flex-end", width: "100%" }}>
+          <Button variant="secondary" disabled={submitting} onClick={onClose}>Отмена</Button>
+          <Button
+            startIcon={<CheckCircle size={18} />}
+            loading={submitting}
+            disabled={!risk}
+            onClick={submit}
+          >
+            Зарегистрировать инцидент
+          </Button>
+        </div>
+      }
+    >
+      <div className="form-grid">
+        {risk ? (
+          <div className="risk-decision-preview field--full">
+            <strong>{risk.predictedEvent}</strong>
+            <span>{formatPercent(risk.probability)} · версия {risk.version}</span>
+          </div>
+        ) : null}
+        <div className="field field--full">
+          <label htmlFor="confirm-comment">Результат проверки *</label>
+          <textarea
+            id="confirm-comment"
+            value={comment}
+            required
+            disabled={submitting}
+            aria-describedby="confirm-comment-hint"
+            onChange={(event) => {
+              setComment(event.target.value);
+              setLocalError(null);
+            }}
+          />
+          <p className="field__hint" id="confirm-comment-hint">
+            Укажи наблюдение диспетчера и рекомендуемое следующее действие. Комментарий попадёт в журнал инцидентов
+          </p>
+        </div>
+        {localError ? <InlineAlert className="field--full" tone="critical" title="Добавь результат проверки">{localError}</InlineAlert> : null}
+        {error ? <InlineAlert className="field--full" tone="critical" title="Backend не зарегистрировал инцидент">{error}</InlineAlert> : null}
+      </div>
+    </Modal>
   );
 }
 

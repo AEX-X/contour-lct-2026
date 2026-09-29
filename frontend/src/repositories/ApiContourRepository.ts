@@ -1,5 +1,6 @@
 import type { z } from 'zod'
 import type {
+  AnalyticsDailyTrend,
   AuditEvent,
   Capability,
   CreateWorkOrderInput,
@@ -42,6 +43,7 @@ import { RepositoryError } from '../domain'
 import { ContourApiClient, type FetchLike } from '../api/ContourApiClient'
 import {
   auditListSchema,
+  dailyTrendSchema,
   engineerCandidateListSchema,
   eventListSchema,
   facilityDispatcherAssignmentResponseSchema,
@@ -55,6 +57,7 @@ import {
   notificationSchema,
   modelQualitySchema,
   referenceConfigSchema,
+  riskConfirmResponseSchema,
   riskListSchema,
   riskSchema,
   sensorListSchema,
@@ -64,6 +67,8 @@ import {
   workOrderActionResponseSchema,
   workOrderSchema,
   type ApiAuditEntry,
+  type ApiConfirmedIncident,
+  type ApiDailyTrend,
   type ApiEngineerCandidate,
   type ApiEvent,
   type ApiFacility,
@@ -125,6 +130,7 @@ const capabilityMap: Record<string, Capability[]> = {
   'risk.read': ['risk.read'],
   'risk.acknowledge': ['risk.acknowledge'],
   'risk.resolve': ['risk.reject', 'risk.defer'],
+  'risk.confirm': ['risk.confirm'],
   'work_order.read': ['work_order.read'],
   'work_order.create_draft': ['work_order.create'],
   'work_order.create': ['work_order.create'],
@@ -715,6 +721,63 @@ function mapIncident(item: ApiEvent): Incident {
   }
 }
 
+function mapConfirmedIncident(item: ApiConfirmedIncident): Incident {
+  const facilityId = item.facility_id ?? item.target.facility_id ?? 'unassigned'
+  const targetType = mapTargetType(item.target.type)
+  const status: Incident['status'] = item.resolved_at || item.status === 'resolved'
+    ? 'resolved'
+    : item.status === 'monitoring'
+      ? 'monitoring'
+      : 'open'
+  return {
+    id: item.id,
+    version: item.version,
+    facilityId,
+    target: {
+      type: targetType,
+      id: item.target.id,
+      facilityId,
+      displayName: item.target.display_name,
+      hierarchyPath: [],
+      locationSnapshot: { text: null, geo: null, planPosition: null },
+    },
+    sourceRiskId: item.source_risk_id,
+    title: item.title,
+    description: item.description,
+    severity: mapRiskSeverity(item.severity),
+    status,
+    confirmedAt: item.confirmed_at,
+    confirmedBy: {
+      id: item.confirmed_by.id,
+      displayName: item.confirmed_by.display_name,
+    },
+    resolvedAt: item.resolved_at,
+    failureEpisodeId: item.failure_episode_id,
+    provenance: apiProvenance(
+      'observed',
+      'Backend Contour: подтверждение прогноза',
+      item.confirmed_at,
+    ),
+  }
+}
+
+function mapDailyTrend(item: ApiDailyTrend): AnalyticsDailyTrend {
+  return {
+    points: item.data.map((point) => ({
+      day: point.day,
+      incidents: point.incidents,
+      risks: point.risks,
+      closed: point.closed,
+    })),
+    period: {
+      from: item.meta.from,
+      to: item.meta.to,
+    },
+    timezone: item.meta.timezone,
+    generatedAt: item.meta.generated_at,
+  }
+}
+
 function mapPriority(value: string): WorkOrderPriority {
   const normalized = value.toUpperCase()
   if (['P1', 'P2', 'P3', 'P4'].includes(normalized)) return normalized as WorkOrderPriority
@@ -1298,13 +1361,31 @@ export class ApiContourRepository implements ContourRepository {
   }
 
   async confirmRisk(
-    _riskId: string,
-    _command: RiskDecisionCommand,
+    riskId: string,
+    command: RiskDecisionCommand,
   ): Promise<{ risk: RiskForecast; incident: Incident; auditEventId: string }> {
-    throw new RepositoryError(
-      'SOURCE_UNAVAILABLE',
-      'Backend умеет принять прогноз в работу, но не регистрирует подтверждённый инцидент. Нужен отдельный согласованный endpoint',
-    )
+    try {
+      const response = await this.client.post(
+        `/risks/${encodeURIComponent(riskId)}/confirm`,
+        riskConfirmResponseSchema,
+        {
+          expected_version: command.expectedVersion,
+          comment: command.comment.trim(),
+          idempotency_key: command.idempotencyKey,
+          client_occurred_at: command.clientOccurredAt,
+        },
+      )
+      this.clearCache('risks:')
+      this.clearCache('incidents:')
+      const referenceConfig = await this.getReferenceConfig().catch(() => undefined)
+      return {
+        risk: mapRisk(response.risk, referenceConfig),
+        incident: mapConfirmedIncident(response.incident),
+        auditEventId: response.audit_event_id,
+      }
+    } catch (error) {
+      return this.rethrowRiskConflict(error)
+    }
   }
 
   async listIncidents(facilityId?: string) {
@@ -1560,6 +1641,14 @@ export class ApiContourRepository implements ContourRepository {
     return mapSourceHealth(response)
   }
 
+  async getDailyTrend(period: { from?: string; to?: string } = {}) {
+    const response = await this.client.get('/analytics/daily-trend', dailyTrendSchema, {
+      from: period.from,
+      to: period.to,
+    })
+    return mapDailyTrend(response)
+  }
+
   private async applyRiskDecision(
     riskId: string,
     action: 'acknowledge' | 'reject' | 'defer',
@@ -1575,20 +1664,24 @@ export class ApiContourRepository implements ContourRepository {
       const referenceConfig = await this.getReferenceConfig().catch(() => undefined)
       return mapRisk(updated, referenceConfig)
     } catch (error) {
-      if (!(error instanceof RepositoryError) || error.code !== 'VERSION_CONFLICT') throw error
-      const currentPayload = error.details.current
-      const parsedCurrent = riskSchema.safeParse(currentPayload)
-      if (!parsedCurrent.success) throw error
-      const referenceConfig = await this.getReferenceConfig().catch(() => undefined)
-      throw new RepositoryError(error.code, error.message, {
-        correlationId: error.correlationId,
-        currentVersion: error.currentVersion,
-        currentRisk: mapRisk(parsedCurrent.data, referenceConfig),
-        retryAfterSeconds: error.retryAfterSeconds,
-        details: error.details,
-        fieldErrors: error.fieldErrors,
-      })
+      return this.rethrowRiskConflict(error)
     }
+  }
+
+  private async rethrowRiskConflict(error: unknown): Promise<never> {
+    if (!(error instanceof RepositoryError) || error.code !== 'VERSION_CONFLICT') throw error
+    const currentPayload = error.details.current
+    const parsedCurrent = riskSchema.safeParse(currentPayload)
+    if (!parsedCurrent.success) throw error
+    const referenceConfig = await this.getReferenceConfig().catch(() => undefined)
+    throw new RepositoryError(error.code, error.message, {
+      correlationId: error.correlationId,
+      currentVersion: error.currentVersion,
+      currentRisk: mapRisk(parsedCurrent.data, referenceConfig),
+      retryAfterSeconds: error.retryAfterSeconds,
+      details: error.details,
+      fieldErrors: error.fieldErrors,
+    })
   }
 
   private async listAll<T>(
