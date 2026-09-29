@@ -274,12 +274,16 @@ export interface RiskForecast {
   facilityId: string
   target: WorkOrderTarget
   predictedEvent: string
+  verdict?: string | null
+  blindSpots?: string[]
   probability: number
   severity: RiskSeverity
   horizonHours: number
   status: RiskStatus
   topFactors: Array<{ label: string; contribution: number | null; direction: 'up' | 'down' }>
   recommendation: string
+  modelAlert?: boolean | null
+  modelThreshold?: number | null
   modelAsOf?: ISODateTime
   demoClock?: {
     requestedAsOfUtc: ISODateTime
@@ -649,6 +653,128 @@ export interface RiskDecisionCommand extends MutationMeta {
   comment: string
 }
 
+export interface RiskRejectCommand extends MutationMeta {
+  expectedVersion: number
+  reasonCode: string
+  comment: string
+}
+
+export interface ReferenceOption {
+  id: string
+  displayName: string
+}
+
+export interface ReferenceSensorType extends ReferenceOption {
+  systemType: string
+  valueType: 'numeric' | 'categorical'
+}
+
+export interface ReferenceRiskLevel extends ReferenceOption {
+  minProbability: number
+  maxProbability: number
+}
+
+export interface ReferenceRejectReason extends ReferenceOption {
+  requiresComment: boolean
+}
+
+export interface ReferenceFreshnessBoundary extends ReferenceOption {
+  maxAgeSeconds: number | null
+}
+
+export interface ReferenceConfig {
+  generatedAt: ISODateTime
+  sensorStates: string[]
+  sensorTypes: ReferenceSensorType[]
+  units: Array<ReferenceOption & { symbol: string }>
+  riskTypes: ReferenceOption[]
+  riskLevels: ReferenceRiskLevel[]
+  rejectReasons: ReferenceRejectReason[]
+  workTypes: ReferenceOption[]
+  workOrderStatuses: ReferenceOption[]
+  decisionStatuses: ReferenceOption[]
+  slaParams: Array<{ riskLevel: string; responseMinutes: number }>
+  modelAlertRule: {
+    appliesWhen: string
+    withoutAlert: string
+    medium: string
+    highMinProbability: number
+    slaHorizonFraction: number
+    producesCritical: boolean
+    description: string
+  }
+  freshnessBoundaries: ReferenceFreshnessBoundary[]
+}
+
+export interface ModelQualityMetrics {
+  precision: number
+  recall: number
+  f1: number
+  alerts: number
+  rows: number
+  baseRate: number
+}
+
+export interface ModelQualityModel {
+  id: string
+  displayName: string
+  total: ModelQualityMetrics
+  months: Array<{ month: string; metrics: ModelQualityMetrics }>
+  alertsPerDay: {
+    days: number
+    mean: number
+    median: number
+    max: number
+  } | null
+  ruleBaseline: ModelQualityMetrics | null
+}
+
+export interface ModelQualityReport {
+  source: 'ml_service' | 'file' | string
+  models: ModelQualityModel[]
+}
+
+export interface AnalyticsDailyTrendPoint {
+  day: string
+  incidents: number
+  risks: number
+  closed: number
+}
+
+export interface AnalyticsDailyTrend {
+  points: AnalyticsDailyTrendPoint[]
+  period: {
+    from: string
+    to: string
+  }
+  timezone: string
+  generatedAt: ISODateTime
+}
+
+export type SourceHealthStatus = 'online' | 'delayed' | 'unavailable'
+
+export interface SourceHealthEntry {
+  source: string
+  displayName: string
+  status: SourceHealthStatus
+  lastSuccessAt: ISODateTime | null
+  delaySeconds: number | null
+}
+
+export type RiskReportFormat = 'xlsx' | 'csv_semicolon' | 'csv_comma'
+
+export interface RiskReportOptions {
+  from?: ISODateTime
+  to?: ISODateTime
+  format: RiskReportFormat
+}
+
+export interface RiskReportDownload {
+  blob: Blob
+  filename: string
+  contentType: string
+}
+
 export type RepositoryErrorCode =
   | 'AUTH_REQUIRED'
   | 'VALIDATION_ERROR'
@@ -660,6 +786,7 @@ export type RepositoryErrorCode =
   | 'ASSIGNMENT_CHANGED'
   | 'ACCESS_EXPIRED'
   | 'NO_SUITABLE_ENGINEER'
+  | 'TOO_MANY_REQUESTS'
   | 'SOURCE_UNAVAILABLE'
   | 'PERSISTENCE_FAILED'
 
@@ -667,6 +794,9 @@ export class RepositoryError extends Error {
   readonly code: RepositoryErrorCode
   readonly correlationId: string
   readonly currentVersion?: number
+  readonly currentRisk?: RiskForecast
+  readonly retryAfterSeconds?: number
+  readonly details: Record<string, unknown>
   readonly fieldErrors: Array<{ field: string; code: string; message: string }>
 
   constructor(
@@ -675,6 +805,9 @@ export class RepositoryError extends Error {
     options: {
       correlationId?: string
       currentVersion?: number
+      currentRisk?: RiskForecast
+      retryAfterSeconds?: number
+      details?: Record<string, unknown>
       fieldErrors?: Array<{ field: string; code: string; message: string }>
     } = {},
   ) {
@@ -683,6 +816,9 @@ export class RepositoryError extends Error {
     this.code = code
     this.correlationId = options.correlationId ?? `demo-${code.toLowerCase()}`
     this.currentVersion = options.currentVersion
+    this.currentRisk = options.currentRisk
+    this.retryAfterSeconds = options.retryAfterSeconds
+    this.details = options.details ?? {}
     this.fieldErrors = options.fieldErrors ?? []
   }
 }

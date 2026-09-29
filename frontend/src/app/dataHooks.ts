@@ -143,6 +143,64 @@ export function useDashboardMetrics() {
   });
 }
 
+export function useDailyTrend(
+  period?: { from?: string; to?: string },
+  enabled = true,
+) {
+  const { repository, currentUser } = useContour();
+  return useQuery({
+    queryKey: contourKeys.dailyTrend(currentUser.id, period),
+    queryFn: () => {
+      if (!repository.getDailyTrend) throw new Error("Динамика событий недоступна в текущем режиме");
+      return repository.getDailyTrend(period);
+    },
+    enabled: enabled && Boolean(repository.getDailyTrend),
+    retry: false,
+    staleTime: 60_000,
+  });
+}
+
+export function useReferenceConfig() {
+  const { repository } = useContour();
+  return useQuery({
+    queryKey: contourKeys.referenceConfig(),
+    queryFn: () => {
+      if (!repository.getReferenceConfig) throw new Error("Справочники backend недоступны в текущем режиме");
+      return repository.getReferenceConfig();
+    },
+    enabled: Boolean(repository.getReferenceConfig),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useModelQuality(enabled = true) {
+  const { repository, currentUser } = useContour();
+  return useQuery({
+    queryKey: contourKeys.modelQuality(currentUser.id),
+    queryFn: () => {
+      if (!repository.getModelQuality) throw new Error("Метрики качества модели недоступны в текущем режиме");
+      return repository.getModelQuality();
+    },
+    enabled: enabled && Boolean(repository.getModelQuality),
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useSourceHealth() {
+  const { repository, currentUser } = useContour();
+  return useQuery({
+    queryKey: contourKeys.sourceHealth(currentUser.id),
+    queryFn: () => {
+      if (!repository.getSourceHealth) throw new Error("Статус источников недоступен в текущем режиме");
+      return repository.getSourceHealth();
+    },
+    enabled: Boolean(repository.getSourceHealth),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+}
+
 export function facilityHasUnresolvedForecast(
   facility: Facility,
   risks: RiskForecast[],

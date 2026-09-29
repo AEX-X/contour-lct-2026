@@ -28,9 +28,9 @@ import {
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import type { DemoRole } from "../domain";
 import { Button, Modal } from "../shared/ui";
-import { useNotifications } from "./dataHooks";
+import { useNotifications, useSourceHealth } from "./dataHooks";
 import { useContour } from "./ContourProvider";
-import { roleLabels } from "./labels";
+import { formatDateTime, roleLabels } from "./labels";
 import { getPageTitle } from "./routeMeta";
 
 interface NavigationItem {
@@ -54,6 +54,7 @@ const navigationByRole: Record<DemoRole, NavigationItem[]> = {
     { label: "Операции", to: "/operations", icon: SquaresFour, end: true },
     { label: "Объекты", to: "/city/list", icon: Buildings },
     { label: "Заявки", to: "/work-orders", icon: ClipboardText },
+    { label: "Аналитика", to: "/analytics", icon: ChartLineUp },
     { label: "Уведомления", to: "/notifications", icon: Bell },
   ],
   facility_dispatcher: [
@@ -292,6 +293,68 @@ function SideNavigation() {
   );
 }
 
+function SourceHealthIndicator() {
+  const { repository } = useContour();
+  const query = useSourceHealth();
+  if (!repository.getSourceHealth) return null;
+
+  const sources = query.data ?? [];
+  const unavailable = sources.filter((source) => source.status === "unavailable").length;
+  const delayed = sources.filter((source) => source.status === "delayed").length;
+  const aggregate = query.isError || unavailable > 0
+    ? "unavailable"
+    : delayed > 0
+      ? "delayed"
+      : query.isPending
+        ? "loading"
+        : "online";
+  const label = query.isPending
+    ? "Проверяем источники"
+    : query.isError
+      ? "Статус источников недоступен"
+      : aggregate === "online"
+        ? `Источники ${sources.length}/${sources.length}`
+        : aggregate === "delayed"
+          ? `Задержка: ${delayed}`
+          : `Недоступно: ${unavailable}`;
+
+  return (
+    <details className="source-health app-header__desktop-only">
+      <summary aria-label={label}>
+        <span className="source-health__dot" data-status={aggregate} aria-hidden="true" />
+        <span>{label}</span>
+        <CaretDown size={13} aria-hidden="true" />
+      </summary>
+      <div className="source-health__popover">
+        <strong>Источники данных</strong>
+        {query.isError ? (
+          <div className="source-health__error">
+            <span>Backend не вернул состояние источников</span>
+            <button type="button" onClick={() => void query.refetch()}>Повторить</button>
+          </div>
+        ) : query.isPending ? (
+          <p className="muted">Загружаем состояние источников</p>
+        ) : (
+          <ul>
+            {sources.map((source) => (
+              <li key={source.source}>
+                <span className="source-health__dot" data-status={source.status} aria-hidden="true" />
+                <span>
+                  <strong>{source.displayName}</strong>
+                  <small>
+                    {source.status === "online" ? "Работает" : source.status === "delayed" ? "Есть задержка" : "Недоступен"}
+                    {source.lastSuccessAt ? ` · успешно ${formatDateTime(source.lastSuccessAt)}` : " · успешных обновлений нет"}
+                  </small>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function AppHeader() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -359,6 +422,7 @@ function AppHeader() {
       <span className="demo-badge" data-mode={runtime.mode}>
         {runtime.mode === "api" ? "Backend API" : "Демо-данные"}
       </span>
+      <SourceHealthIndicator />
       <div className="freshness">
         <span className="freshness__dot" aria-hidden="true" />
         <span>

@@ -1,5 +1,6 @@
 import { ArrowRight, Database, LockKey } from '@phosphor-icons/react'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { RepositoryError } from '../domain'
 import type { RepositoryAuthCredentials, RepositoryRuntimeInfo } from '../repositories'
 import { Button, InlineAlert, StatusBadge } from '../shared/ui'
 
@@ -23,12 +24,21 @@ export function ApiLoginPage({
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ title: string; message: string } | null>(null)
+  const [retryAfterSeconds, setRetryAfterSeconds] = useState(0)
+
+  useEffect(() => {
+    if (retryAfterSeconds <= 0) return
+    const timer = globalThis.setTimeout(() => {
+      setRetryAfterSeconds((value) => Math.max(0, value - 1))
+    }, 1_000)
+    return () => globalThis.clearTimeout(timer)
+  }, [retryAfterSeconds])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!username.trim() || !password) {
-      setError('Укажи логин и пароль backend')
+      setError({ title: 'Проверь данные', message: 'Укажи логин и пароль backend' })
       return
     }
     setPending(true)
@@ -36,7 +46,19 @@ export function ApiLoginPage({
     try {
       await onLogin({ username: username.trim(), password })
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Не удалось войти в backend')
+      if (nextError instanceof RepositoryError && nextError.code === 'TOO_MANY_REQUESTS') {
+        const seconds = Math.max(1, Math.ceil(nextError.retryAfterSeconds ?? 60))
+        setRetryAfterSeconds(seconds)
+        setError({
+          title: 'Вход временно заблокирован',
+          message: `Слишком много попыток входа. Повторите через ${Math.max(1, Math.ceil(seconds / 60))} мин`,
+        })
+      } else {
+        setError({
+          title: 'Вход не выполнен',
+          message: nextError instanceof Error ? nextError.message : 'Не удалось войти в backend',
+        })
+      }
     } finally {
       setPending(false)
     }
@@ -62,8 +84,10 @@ export function ApiLoginPage({
           </div>
         </dl>
         {error ? (
-          <InlineAlert tone="critical" title="Вход не выполнен">
-            {error}
+          <InlineAlert tone="critical" title={error.title}>
+            {retryAfterSeconds > 0
+              ? `Слишком много попыток входа. Повторите через ${Math.max(1, Math.ceil(retryAfterSeconds / 60))} мин`
+              : error.message}
           </InlineAlert>
         ) : null}
         <form className="api-login-form" onSubmit={handleSubmit}>
@@ -75,7 +99,7 @@ export function ApiLoginPage({
                   <button
                     key={account.username}
                     type="button"
-                    disabled={pending}
+                    disabled={pending || retryAfterSeconds > 0}
                     onClick={() => {
                       setUsername(account.username)
                       setPassword(account.password)
@@ -95,7 +119,7 @@ export function ApiLoginPage({
               name="username"
               autoComplete="username"
               value={username}
-              disabled={pending}
+              disabled={pending || retryAfterSeconds > 0}
               onChange={(event) => setUsername(event.target.value)}
             />
           </div>
@@ -109,7 +133,7 @@ export function ApiLoginPage({
                 type="password"
                 autoComplete="current-password"
                 value={password}
-                disabled={pending}
+                disabled={pending || retryAfterSeconds > 0}
                 onChange={(event) => setPassword(event.target.value)}
               />
             </div>
@@ -118,6 +142,7 @@ export function ApiLoginPage({
             type="submit"
             fullWidth
             loading={pending}
+            disabled={retryAfterSeconds > 0}
             endIcon={<ArrowRight size={18} />}
           >
             Войти

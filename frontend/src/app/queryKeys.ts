@@ -31,4 +31,9 @@ export const contourKeys = {
   audit: (actorId: string, entityType: string, entityId: string) =>
     [...contourKeys.all, actorId, "audit", entityType, entityId] as const,
   metrics: (actorId: string) => [...contourKeys.all, actorId, "metrics"] as const,
+  dailyTrend: (actorId: string, period?: unknown) =>
+    [...contourKeys.all, actorId, "daily-trend", period ?? {}] as const,
+  referenceConfig: () => [...contourKeys.all, "reference-config"] as const,
+  modelQuality: (actorId: string) => [...contourKeys.all, actorId, "model-quality"] as const,
+  sourceHealth: (actorId: string) => [...contourKeys.all, actorId, "source-health"] as const,
 };

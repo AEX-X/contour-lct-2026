@@ -20,21 +20,25 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { InlineAlert, KpiCard, SegmentedControl, StatusBadge } from "../shared/ui";
+import { Button, InlineAlert, KpiCard, SegmentedControl, StatusBadge } from "../shared/ui";
 import {
+  useDailyTrend,
   useDashboardMetrics,
   useFacilities,
+  useModelQuality,
   useRisks,
   useWorkOrders,
 } from "../app/dataHooks";
 import { formatDateTime, formatPercent } from "../app/labels";
 import { PageError, PageLoading } from "../components/StateViews";
 import { hasActiveEngineerAssignment, isRiskActiveAt } from "../domain";
+import type { ModelQualityReport } from "../domain";
 import { useContour } from "../app/ContourProvider";
+import { RiskReportExport } from "../components/RiskReportExport";
 
-type AnalyticsTab = "management" | "technical" | "finance";
+type AnalyticsTab = "management" | "technical" | "model_quality" | "finance";
 
-const trendData = [
+const demoTrendData = [
   { day: "15 сен", incidents: 4, risks: 13, closed: 7 },
   { day: "16 сен", incidents: 3, risks: 15, closed: 8 },
   { day: "17 сен", incidents: 5, risks: 12, closed: 10 },
@@ -45,12 +49,19 @@ const trendData = [
 ];
 
 export function AnalyticsPage() {
-  const { runtime } = useContour();
+  const { currentUser, repository, runtime } = useContour();
   const [tab, setTab] = useState<AnalyticsTab>("management");
+  const canReadModelQuality = currentUser.permissions.includes("analytics.technical.read") && Boolean(repository.getModelQuality);
+  const canReadFinance = currentUser.permissions.includes("analytics.economy.read");
   const metricsQuery = useDashboardMetrics();
   const facilitiesQuery = useFacilities();
   const risksQuery = useRisks();
   const ordersQuery = useWorkOrders();
+  const dailyTrendQuery = useDailyTrend(
+    undefined,
+    runtime.mode === "api" && currentUser.permissions.includes("analytics.management.read"),
+  );
+  const modelQualityQuery = useModelQuality(tab === "model_quality" && canReadModelQuality);
 
   if (
     metricsQuery.isPending ||
@@ -96,17 +107,28 @@ export function AnalyticsPage() {
         !["draft", "closed", "cancelled"].includes(order.status),
     ).length,
   }));
+  const trendRows = runtime.mode === "mock"
+    ? demoTrendData
+    : (dailyTrendQuery.data?.points ?? []).map((point) => ({
+        ...point,
+        day: formatTrendDay(point.day),
+      }));
 
   return (
     <div className="page">
       <header className="page-header">
         <div>
-          <h1>Аналитика руководителя</h1>
+          <h1>{currentUser.role === "manager" ? "Аналитика руководителя" : "Операционная аналитика"}</h1>
           <p className="page-header__meta">
-            Управленческие, технические и финансовые показатели всей городской сети
+            {currentUser.role === "manager"
+              ? "Управленческие, технические и финансовые показатели всей городской сети"
+              : "Управленческие и технические показатели доступной эксплуатационной зоны"}
           </p>
         </div>
-        <StatusBadge tone="forecast">{runtime.mode === "api" ? "Backend API" : "Синтетический демо-сценарий"}</StatusBadge>
+        <div className="page-actions">
+          <RiskReportExport />
+          <StatusBadge tone="forecast">{runtime.mode === "api" ? "Backend API" : "Синтетический демо-сценарий"}</StatusBadge>
+        </div>
       </header>
 
       {historicalDemoRisk ? (
@@ -123,7 +145,8 @@ export function AnalyticsPage() {
         items={[
           { value: "management", label: "Управленческие", icon: <ChartLineUp size={18} /> },
           { value: "technical", label: "Технические", icon: <Gauge size={18} /> },
-          { value: "finance", label: "Финансовые", icon: <CurrencyRub size={18} /> },
+          ...(canReadModelQuality ? [{ value: "model_quality", label: "Качество модели", icon: <Pulse size={18} /> }] : []),
+          ...(canReadFinance ? [{ value: "finance", label: "Финансовые", icon: <CurrencyRub size={18} /> }] : []),
         ]}
       />
 
@@ -159,13 +182,31 @@ export function AnalyticsPage() {
                 <div>
                   <h2>Динамика событий и работ</h2>
                   <p className="page-header__meta">
-                    {runtime.mode === "api" ? "Историческая агрегация пока не опубликована API" : "Статичный демонстрационный ряд за 15-21 сентября"}
+                    {runtime.mode === "api"
+                      ? dailyTrendQuery.data
+                        ? `${formatTrendPeriod(dailyTrendQuery.data.period.from, dailyTrendQuery.data.period.to)}, московское время`
+                        : "Последние 7 дней по данным backend"
+                      : "Статичный демонстрационный ряд за 15-21 сентября"}
                   </p>
                 </div>
               </header>
-              {runtime.mode === "mock" ? <><div className="surface__body chart-frame" aria-hidden="true">
+              {runtime.mode === "api" && dailyTrendQuery.isPending ? (
+                <div className="surface__body"><p className="muted">Загружаем динамику событий и работ</p></div>
+              ) : runtime.mode === "api" && dailyTrendQuery.isError ? (
+                <div className="surface__body">
+                  <InlineAlert
+                    tone="warning"
+                    title="Динамика временно недоступна"
+                    action={<Button variant="secondary" onClick={() => void dailyTrendQuery.refetch()}>Повторить запрос</Button>}
+                  >
+                    {dailyTrendQuery.error instanceof Error
+                      ? dailyTrendQuery.error.message
+                      : "Backend не вернул временной ряд"}
+                  </InlineAlert>
+                </div>
+              ) : trendRows.length ? <><div className="surface__body chart-frame" aria-hidden="true">
                 <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={trendData} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+                  <AreaChart data={trendRows} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
                     <defs>
                       <linearGradient id="riskFill" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.24} />
@@ -177,27 +218,27 @@ export function AnalyticsPage() {
                     <YAxis allowDecimals={false} tick={{ fill: "#66758f", fontSize: 11 }} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ borderRadius: 8, borderColor: "#d8e1ed" }} />
                     <Legend />
-                    <Area type="monotone" name="Высокие риски" dataKey="risks" stroke="#7c3aed" fill="url(#riskFill)" strokeWidth={2} />
+                    <Area type="monotone" name="Новые прогнозы" dataKey="risks" stroke="#7c3aed" fill="url(#riskFill)" strokeWidth={2} />
                     <Area type="monotone" name="Закрыто заявок" dataKey="closed" stroke="#20aa60" fill="transparent" strokeWidth={2} />
                     <Area type="monotone" name="Инциденты" dataKey="incidents" stroke="#d7263d" fill="transparent" strokeWidth={2} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
               <div className="surface__body chart-data-companion">
-                <p>Этот сценарный ряд не пересчитывается после действий в текущей сессии. Актуальные значения показываются в KPI выше, точные точки ряда доступны в таблице</p>
+                <p>{runtime.mode === "api"
+                  ? `Каждая точка рассчитана backend в зоне видимости пользователя. Обновлено ${formatDateTime(dailyTrendQuery.data?.generatedAt)}`
+                  : "Этот сценарный ряд не пересчитывается после действий в текущей сессии. Актуальные значения показываются в KPI выше"}</p>
                 <details className="data-table-details">
                   <summary>Показать данные графика</summary>
-                  <div className="table-scroll"><table><thead><tr><th>День</th><th>Высокие риски</th><th>Закрыто заявок</th><th>Инциденты</th></tr></thead><tbody>{trendData.map((row) => <tr key={row.day}><td>{row.day}</td><td>{row.risks}</td><td>{row.closed}</td><td>{row.incidents}</td></tr>)}</tbody></table></div>
+                  <div className="table-scroll"><table><thead><tr><th>День</th><th>Новые прогнозы</th><th>Закрыто заявок</th><th>Инциденты</th></tr></thead><tbody>{trendRows.map((row) => <tr key={row.day}><td>{row.day}</td><td>{row.risks}</td><td>{row.closed}</td><td>{row.incidents}</td></tr>)}</tbody></table></div>
                 </details>
-              </div></> : <div className="surface__body">
-                <p className="muted">Текущие KPI выше рассчитаны по API. Временной ряд не подменяется демонстрационными точками</p>
-              </div>}
+              </div></> : <div className="surface__body"><p className="muted">За выбранный период событий и работ нет</p></div>}
             </section>
 
             <section className="surface">
               <header className="surface__header">
                 <div>
-                  <h2>Решения руководителя</h2>
+                  <h2>{currentUser.role === "manager" ? "Решения руководителя" : "Операционный контроль"}</h2>
                   <p className="page-header__meta">Показатели, требующие контроля</p>
                 </div>
               </header>
@@ -305,6 +346,19 @@ export function AnalyticsPage() {
         </div>
       ) : null}
 
+      {tab === "model_quality" && canReadModelQuality ? (
+        <ModelQualitySection
+          report={modelQualityQuery.data}
+          loading={modelQualityQuery.isPending}
+          error={modelQualityQuery.isError
+            ? modelQualityQuery.error instanceof Error
+              ? modelQualityQuery.error.message
+              : "Метрики качества модели недоступны"
+            : null}
+          onRetry={() => void modelQualityQuery.refetch()}
+        />
+      ) : null}
+
       {tab === "finance" ? (
         <div className="content-stack" style={{ marginTop: 16 }}>
           <div className="kpi-grid">
@@ -347,6 +401,146 @@ export function AnalyticsPage() {
       <p className="provenance-note" style={{ marginTop: 16 }}>
         Показатели обновлены {formatDateTime(metricsQuery.data[0]?.updatedAt)}. Источник: {runtime.mode === "api" ? "расчёт по данным backend" : "синтетический сценарий Contour"}
       </p>
+    </div>
+  );
+}
+
+function formatTrendDay(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return value;
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "short",
+    timeZone: "Europe/Moscow",
+  }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+}
+
+function formatTrendPeriod(from: string, to: string) {
+  return `Период ${formatTrendDay(from)} - ${formatTrendDay(to)}`;
+}
+
+function detailedPercent(value: number) {
+  return new Intl.NumberFormat("ru-RU", {
+    style: "percent",
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function modelQualitySourceLabel(source: string) {
+  if (source === "ml_service") return "ML-сервис";
+  if (source === "file") return "Файл метрик в backend";
+  return source;
+}
+
+function ModelQualitySection({
+  report,
+  loading,
+  error,
+  onRetry,
+}: {
+  report?: ModelQualityReport;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  if (loading) return <PageLoading label="Загружаем проверку качества моделей" />;
+  if (error || !report) {
+    return (
+      <div className="content-stack" style={{ marginTop: 16 }}>
+        <InlineAlert
+          tone="warning"
+          title="Метрики качества модели недоступны"
+          action={<Button variant="secondary" onClick={onRetry}>Повторить запрос</Button>}
+        >
+          {error ?? "Backend не вернул ни ответ ML-сервиса, ни резервный файл метрик"}
+        </InlineAlert>
+      </div>
+    );
+  }
+
+  return (
+    <div className="content-stack model-quality" style={{ marginTop: 16 }}>
+      <InlineAlert tone="info" title="Что означают показатели">
+        Precision показывает долю верных предупреждений среди всех предупреждений модели. Recall показывает долю найденных событий среди всех фактически произошедших. Метрики рассчитаны ML-командой на тестовой выборке 2026 года
+      </InlineAlert>
+      {report.models.map((model) => {
+        const precisionGain = model.ruleBaseline
+          ? (model.total.precision - model.ruleBaseline.precision) * 100
+          : null;
+        const recallGain = model.ruleBaseline
+          ? (model.total.recall - model.ruleBaseline.recall) * 100
+          : null;
+        return (
+          <section className="surface" key={model.id}>
+            <header className="surface__header">
+              <div>
+                <h2>{model.displayName}</h2>
+                <p className="page-header__meta">Тестовая проверка устойчивости по месяцам 2026 года</p>
+              </div>
+              <StatusBadge tone="info">Источник: {modelQualitySourceLabel(report.source)}</StatusBadge>
+            </header>
+            <div className="surface__body content-stack">
+              <div className="model-quality__metrics">
+                <article>
+                  <span>Precision</span>
+                  <strong>{detailedPercent(model.total.precision)}</strong>
+                  <small>точность предупреждений</small>
+                </article>
+                <article>
+                  <span>Recall</span>
+                  <strong>{detailedPercent(model.total.recall)}</strong>
+                  <small>полнота обнаружения</small>
+                </article>
+                <article>
+                  <span>F1</span>
+                  <strong>{detailedPercent(model.total.f1)}</strong>
+                  <small>баланс точности и полноты</small>
+                </article>
+                <article>
+                  <span>Объектов под предупреждением в сутки</span>
+                  <strong>{model.alertsPerDay ? model.alertsPerDay.mean.toLocaleString("ru-RU", { maximumFractionDigits: 1 }) : "Нет данных"}</strong>
+                  <small>{model.alertsPerDay ? `медиана ${model.alertsPerDay.median}, максимум ${model.alertsPerDay.max}` : "метрика не опубликована"}</small>
+                </article>
+              </div>
+              {model.ruleBaseline ? (
+                <InlineAlert tone="success" title="Сравнение с правилом alarm за 24 часа">
+                  Precision модели {precisionGain !== null && precisionGain >= 0 ? "выше" : "ниже"} на {Math.abs(precisionGain ?? 0).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} п.п., recall {recallGain !== null && recallGain >= 0 ? "выше" : "ниже"} на {Math.abs(recallGain ?? 0).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} п.п.
+                </InlineAlert>
+              ) : null}
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Месяц</th>
+                      <th>Precision</th>
+                      <th>Recall</th>
+                      <th>F1</th>
+                      <th>Предупреждений</th>
+                      <th>Строк теста</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {model.months.map(({ month, metrics }) => (
+                      <tr key={month}>
+                        <td>{new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`))}</td>
+                        <td>{detailedPercent(metrics.precision)}</td>
+                        <td>{detailedPercent(metrics.recall)}</td>
+                        <td>{detailedPercent(metrics.f1)}</td>
+                        <td>{metrics.alerts.toLocaleString("ru-RU")}</td>
+                        <td>{metrics.rows.toLocaleString("ru-RU")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="provenance-note">
+                Всего строк теста: {model.total.rows.toLocaleString("ru-RU")}. Базовая частота события: {detailedPercent(model.total.baseRate)}
+              </p>
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }

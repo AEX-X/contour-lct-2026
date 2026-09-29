@@ -238,7 +238,7 @@ export function App() {
         <Route
           path="/analytics"
           element={
-            <RoleGuard roles={["manager"]}>
+            <RoleGuard roles={["manager", "senior_dispatcher"]}>
               <AnalyticsPage />
             </RoleGuard>
           }
