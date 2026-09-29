@@ -141,16 +141,16 @@ async def test_defer_succeeds_without_reason_code() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_lacks_risk_resolve_and_gets_403_on_reject_and_defer() -> None:
+async def test_engineer_lacks_risk_resolve_and_gets_403_on_reject_and_defer() -> None:
     await _seed_all()
-    await _add_risk("risk_dispatcher_reject", "fac_5122")
-    await _add_risk("risk_dispatcher_defer", "fac_5122")
-    token = await _login("dispatcher", "dispatcher123")
+    await _add_risk("risk_engineer_reject", "fac_5122")
+    await _add_risk("risk_engineer_defer", "fac_5122")
+    token = await _login("engineer", "engineer123")
 
     reject_response = await _reject(
-        token, "risk_dispatcher_reject", {"expected_version": 1, "reason_code": "false_alarm"}
+        token, "risk_engineer_reject", {"expected_version": 1, "reason_code": "false_alarm"}
     )
     assert reject_response.status_code == 403
 
-    defer_response = await _defer(token, "risk_dispatcher_defer", {"expected_version": 1})
+    defer_response = await _defer(token, "risk_engineer_defer", {"expected_version": 1})
     assert defer_response.status_code == 403

@@ -453,6 +453,7 @@ function mapRiskSeverity(value: string): RiskSeverity {
 function mapRiskStatus(value: string): RiskForecast['status'] {
   if (value === 'open') return 'new'
   if (value === 'acknowledged') return 'acknowledged'
+  if (value === 'confirmed') return 'confirmed'
   if (value === 'rejected') return 'rejected'
   if (value === 'deferred') return 'deferred'
   if (value === 'resolved') return 'resolved'

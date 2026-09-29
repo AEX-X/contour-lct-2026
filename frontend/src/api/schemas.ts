@@ -212,7 +212,7 @@ export const riskSchema = z.object({
   model_threshold: z.number().nullable().optional(),
   risk_level: z.enum(['low', 'medium', 'high', 'critical']),
   priority_score: z.number(),
-  decision_status: z.enum(['open', 'acknowledged', 'rejected', 'deferred', 'resolved']),
+  decision_status: z.enum(['open', 'acknowledged', 'confirmed', 'rejected', 'deferred', 'resolved']),
   sla_due_at: isoDateTime,
   data_health: z.string(),
   model: z.string(),

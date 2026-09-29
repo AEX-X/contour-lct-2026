@@ -33,6 +33,8 @@ _FACILITY_DISPATCHER = frozenset(
         "sensor.read",
         "risk.read",
         "risk.acknowledge",
+        "risk.resolve",
+        "risk.confirm",
         "work_order.read",
         "work_order.create_draft",
         "work_order.create",

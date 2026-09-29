@@ -141,7 +141,11 @@ async def list_risks(
 
 
 async def get_risk_detail(
-    session: AsyncSession, risk_id: str, allowed_facility_ids: set[str] | None
+    session: AsyncSession,
+    risk_id: str,
+    allowed_facility_ids: set[str] | None,
+    *,
+    for_update: bool = False,
 ) -> Risk:
     """Fetch one risk's ORM row, enforcing scope without leaking data.
 
@@ -150,6 +154,7 @@ async def get_risk_detail(
         risk_id: The requested risk id.
         allowed_facility_ids: None for all_facilities scope, else the exact
             set of facility ids the caller may see.
+        for_update: Lock the row (SELECT ... FOR UPDATE) and refresh it.
 
     Returns:
         The Risk row.
@@ -158,9 +163,10 @@ async def get_risk_detail(
         ApiError: 404 if it does not exist at all; 403 if it exists but is
             outside scope (no risk data included in the error body).
     """
-    risk = (
-        await session.execute(select(Risk).where(Risk.id == risk_id))
-    ).scalar_one_or_none()
+    stmt = select(Risk).where(Risk.id == risk_id)
+    if for_update:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    risk = (await session.execute(stmt)).scalar_one_or_none()
     if risk is None:
         raise ApiError(404, "NOT_FOUND", "Прогноз не найден")
     if (

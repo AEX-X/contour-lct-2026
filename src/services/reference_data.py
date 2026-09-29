@@ -223,6 +223,7 @@ DECISION_STATUSES: list[DecisionStatus] = [
     DecisionStatus(id="acknowledged", display_name="Подтверждён"),
     DecisionStatus(id="rejected", display_name="Отклонён"),
     DecisionStatus(id="deferred", display_name="Отложен"),
+    DecisionStatus(id="confirmed", display_name="Подтверждён как инцидент"),
 ]
 
 SLA_PARAMS: list[SlaParam] = [

@@ -10,7 +10,7 @@ states, not one collapsed status.
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.base import Base
@@ -22,9 +22,21 @@ class Event(Base):
     """One materialized alarm/anomaly event, denormalized for fast querying."""
 
     __tablename__ = "events"
+    __table_args__ = (
+        # One confirmed incident per risk (see risk_confirmation.py).
+        Index(
+            "uq_events_confirmed_incident_risk",
+            "related_risk_id",
+            unique=True,
+            postgresql_where=text("is_confirmed_incident AND source_reading_id IS NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    source_reading_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    # None for an incident confirmed by a dispatcher from a risk forecast.
+    source_reading_id: Mapped[int | None] = mapped_column(
+        Integer, unique=True, index=True, nullable=True
+    )
     event_type: Mapped[str] = mapped_column(String, index=True)
     source: Mapped[str] = mapped_column(String)
     facility_id: Mapped[str | None] = mapped_column(ForeignKey("facilities.id"), nullable=True)
