@@ -23,9 +23,12 @@ const mePayload = {
     'sensor.read',
     'risk.read',
     'risk.acknowledge',
+    'risk.resolve',
     'work_order.read',
     'work_order.create_draft',
     'audit.read',
+    'analytics.read.technical',
+    'report.export',
   ],
   scope: { type: 'all_facilities' },
   timezone: 'Europe/Moscow',
@@ -136,6 +139,8 @@ const riskPayload = {
   threshold: 0.7,
   alert: true,
   model_threshold: 0.7,
+  verdict: 'Риск подтопления на объекте: 82 % за 72 ч, выше порога тревоги',
+  blind_spots: ['Нет датчиков затопления в резервной насосной'],
   risk_level: 'high',
   priority_score: 0.82,
   decision_status: 'open',
@@ -149,6 +154,35 @@ const riskPayload = {
   updated_at: '2026-09-27T20:00:00Z',
 }
 
+const referenceConfigPayload = {
+  data: {
+    sensor_states: ['normal', 'warning'],
+    sensor_types: [{ id: 'temperature_sensor', display_name: 'Датчик температуры', system_type: 'temperature', value_type: 'numeric' }],
+    units: [{ id: 'celsius', display_name: 'Градус Цельсия', symbol: '°C' }],
+    risk_types: [{ id: 'flooding', display_name: 'Подтопление по справочнику' }],
+    risk_levels: [{ id: 'high', display_name: 'Высокий', min_probability: 0.6, max_probability: 0.85 }],
+    reject_reasons: [
+      { id: 'false_alarm', display_name: 'Ложное срабатывание', requires_comment: false },
+      { id: 'other', display_name: 'Другое', requires_comment: true },
+    ],
+    work_types: [{ id: 'inspection', display_name: 'Осмотр' }],
+    work_order_statuses: [{ id: 'draft', display_name: 'Черновик' }],
+    decision_statuses: [{ id: 'open', display_name: 'Открыт' }],
+    sla_params: [{ risk_level: 'high', response_minutes: 60 }],
+    model_alert_rule: {
+      applies_when: 'alert не null',
+      without_alert: 'риск не создаётся',
+      medium: 'тревога ниже порога',
+      high_min_probability: 0.85,
+      sla_horizon_fraction: 1 / 3,
+      produces_critical: false,
+      description: 'Уровень считается по порогу модели',
+    },
+    freshness_boundaries: [{ id: 'fresh', display_name: 'Актуально', max_age_seconds: 300 }],
+  },
+  meta: { generated_at: '2026-09-29T08:00:00Z' },
+}
+
 function createBackendFetch() {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
@@ -159,6 +193,10 @@ function createBackendFetch() {
     if (url === '/api/v1/me') {
       expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer session-token')
       return json(mePayload)
+    }
+    if (url === '/api/v1/config') {
+      expect(new Headers(init?.headers).get('Authorization')).toBeNull()
+      return json(referenceConfigPayload)
     }
     if (url.startsWith('/api/v1/facilities?')) {
       return json({
@@ -180,6 +218,18 @@ function createBackendFetch() {
         version: 4,
         updated_at: '2026-09-27T20:05:00Z',
       })
+    }
+    if (url === '/api/v1/risks/risk-1/reject') {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        expected_version: 3,
+        reason_code: 'false_alarm',
+        comment: 'Проверено на месте',
+      })
+      return json({ ...riskPayload, decision_status: 'rejected', version: 4 })
+    }
+    if (url === '/api/v1/risks/risk-1/defer') {
+      expect(JSON.parse(String(init?.body))).toEqual({ expected_version: 3 })
+      return json({ ...riskPayload, decision_status: 'deferred', version: 4 })
     }
     if (url === '/api/v1/work-orders') {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
@@ -474,7 +524,7 @@ describe('ApiContourRepository', () => {
 
     const [risk] = await repository.listRisks()
 
-    expect(risk?.predictedEvent).toBe('Риск подтопления')
+    expect(risk?.predictedEvent).toBe('Подтопление по справочнику')
     expect(risk?.topFactors[0]).toEqual({
       label: 'Рост срабатываний датчиков затопления',
       contribution: null,
@@ -487,6 +537,8 @@ describe('ApiContourRepository', () => {
         anchorUtc: '2026-09-27T00:00:00Z',
       },
       dataHealth: 'fresh',
+      verdict: 'Риск подтопления на объекте: 82 % за 72 ч, выше порога тревоги',
+      blindSpots: ['Нет датчиков затопления в резервной насосной'],
     })
     expect(risk?.provenance.note).toContain('Исторический ML-демо')
   })
@@ -508,6 +560,74 @@ describe('ApiContourRepository', () => {
 
     expect(risk.status).toBe('acknowledged')
     expect(risk.version).toBe(4)
+  })
+
+  it('rejects and defers a risk through the backend contract', async () => {
+    const repository = createApiContourRepository({
+      baseUrl: '/api/v1',
+      fetcher: createBackendFetch() as typeof fetch,
+      storage: createMemoryStorage(),
+    })
+    await repository.login!({ username: 'manager', password: 'secret' })
+
+    const rejected = await repository.rejectRisk!('risk-1', {
+      expectedVersion: 3,
+      reasonCode: 'false_alarm',
+      comment: 'Проверено на месте',
+      idempotencyKey: 'reject-1',
+      clientOccurredAt: '2026-09-29T08:00:00Z',
+    })
+    const deferred = await repository.deferRisk!('risk-1', {
+      expectedVersion: 3,
+      comment: 'Отложено',
+      idempotencyKey: 'defer-1',
+      clientOccurredAt: '2026-09-29T08:00:00Z',
+    })
+
+    expect(rejected).toMatchObject({ status: 'rejected', version: 4 })
+    expect(deferred).toMatchObject({ status: 'deferred', version: 4 })
+  })
+
+  it('preserves the current risk card from an optimistic-lock conflict', async () => {
+    const baseFetch = createBackendFetch()
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/v1/risks/risk-1/reject') {
+        return json({
+          error: {
+            code: 'CONFLICT',
+            message: 'Версия прогноза устарела, обновите карточку',
+            trace_id: 'trace-risk-conflict',
+            details: {
+              current: {
+                ...riskPayload,
+                probability: 0.91,
+                version: 7,
+                updated_at: '2026-09-29T08:10:00Z',
+              },
+            },
+          },
+        }, 409)
+      }
+      return baseFetch(input, init)
+    })
+    const repository = createApiContourRepository({
+      baseUrl: '/api/v1',
+      fetcher: fetcher as typeof fetch,
+      storage: createMemoryStorage(),
+    })
+    await repository.login!({ username: 'manager', password: 'secret' })
+
+    await expect(repository.rejectRisk!('risk-1', {
+      expectedVersion: 3,
+      reasonCode: 'false_alarm',
+      comment: '',
+      idempotencyKey: 'reject-conflict',
+      clientOccurredAt: '2026-09-29T08:00:00Z',
+    })).rejects.toMatchObject({
+      code: 'VERSION_CONFLICT',
+      currentVersion: 7,
+      currentRisk: { id: 'risk-1', version: 7, probability: 0.91 },
+    })
   })
 
   it('translates frontend priority and preserves a concrete target type in the backend contract', async () => {
@@ -1294,6 +1414,135 @@ describe('ApiContourRepository', () => {
     const [event] = await repository.getAuditTimeline('work_order', 'wo-1')
 
     expect(event).toMatchObject({ beforeVersion: 4, afterVersion: 5 })
+  })
+
+  it('loads public reference data without a session token', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('/api/v1/config')
+      expect(new Headers(init?.headers).get('Authorization')).toBeNull()
+      return json(referenceConfigPayload)
+    })
+    const repository = createApiContourRepository({
+      baseUrl: '/api/v1',
+      fetcher: fetcher as typeof fetch,
+      storage: createMemoryStorage(),
+    })
+
+    const config = await repository.getReferenceConfig!()
+
+    expect(config.rejectReasons).toEqual([
+      { id: 'false_alarm', displayName: 'Ложное срабатывание', requiresComment: false },
+      { id: 'other', displayName: 'Другое', requiresComment: true },
+    ])
+    expect(config.modelAlertRule.highMinProbability).toBe(0.85)
+  })
+
+  it('maps model quality, source health, and an authenticated report download', async () => {
+    const qualityPayload = {
+      incident: {
+        total: { precision: 0.82, recall: 0.61, f1: 0.70, alerts: 100, rows: 500, base_rate: 0.3 },
+        months: {
+          '2026-01': { precision: 0.8, recall: 0.6, f1: 0.68, alerts: 45, rows: 240, base_rate: 0.29 },
+        },
+        alerts_per_day: { days: 31, mean: 20.1, median: 20, max: 30 },
+        rule_alarm_24h: {
+          total: { precision: 0.57, recall: 0.49, f1: 0.53, alerts: 130, rows: 500, base_rate: 0.3 },
+        },
+      },
+      neispraven: {
+        total: { precision: 0.87, recall: 0.62, f1: 0.73, alerts: 80, rows: 480, base_rate: 0.24 },
+        months: {},
+      },
+    }
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/v1/auth/login') return json({ token: 'session-token' })
+      if (url === '/api/v1/me') return json(mePayload)
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer session-token')
+      if (url === '/api/v1/model-quality') {
+        return new Response(JSON.stringify(qualityPayload), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'X-Data-Source': 'file' },
+        })
+      }
+      if (url === '/api/v1/system/source-health') {
+        return json({
+          data: [{
+            source: 'smvu',
+            display_name: 'СМВУ',
+            status: 'delayed',
+            last_success_at: '2026-09-29T08:00:00Z',
+            delay_seconds: 420,
+          }],
+          meta: { generated_at: '2026-09-29T08:07:00Z' },
+        })
+      }
+      if (url === '/api/v1/reports/risks?from=2026-09-01T00%3A00%3A00.000Z&to=2026-09-29T23%3A59%3A59.999Z&format=csv_semicolon') {
+        return new Response('id;probability\nrisk-1;0.82', {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': 'attachment; filename="risks_2026-09-01_2026-09-29.csv"',
+          },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    const repository = createApiContourRepository({
+      baseUrl: '/api/v1',
+      fetcher: fetcher as typeof fetch,
+      storage: createMemoryStorage(),
+    })
+    await repository.login!({ username: 'manager', password: 'secret' })
+
+    const [quality, sourceHealth, report] = await Promise.all([
+      repository.getModelQuality!(),
+      repository.getSourceHealth!(),
+      repository.exportRiskReport!({
+        from: '2026-09-01T00:00:00.000Z',
+        to: '2026-09-29T23:59:59.999Z',
+        format: 'csv_semicolon',
+      }),
+    ])
+
+    expect(quality).toMatchObject({
+      source: 'file',
+      models: [
+        { id: 'incident', displayName: 'Риск инцидента', total: { precision: 0.82 }, ruleBaseline: { precision: 0.57 } },
+        { id: 'neispraven', displayName: 'Риск неисправности', total: { precision: 0.87 } },
+      ],
+    })
+    expect(sourceHealth).toEqual([{
+      source: 'smvu',
+      displayName: 'СМВУ',
+      status: 'delayed',
+      lastSuccessAt: '2026-09-29T08:00:00Z',
+      delaySeconds: 420,
+    }])
+    expect(report.filename).toBe('risks_2026-09-01_2026-09-29.csv')
+    expect(await report.blob.text()).toContain('risk-1;0.82')
+  })
+
+  it('maps backend login throttling with retry-after details', async () => {
+    const fetcher = vi.fn(async () => json({
+      error: {
+        code: 'TOO_MANY_REQUESTS',
+        message: 'Слишком много попыток входа',
+        trace_id: 'trace-rate-limit',
+        details: { retry_after_seconds: 119 },
+      },
+    }, 429))
+    const repository = createApiContourRepository({
+      baseUrl: '/api/v1',
+      fetcher: fetcher as typeof fetch,
+      storage: createMemoryStorage(),
+    })
+
+    await expect(repository.login!({ username: 'manager', password: 'wrong' })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      retryAfterSeconds: 119,
+      correlationId: 'trace-rate-limit',
+    } satisfies Partial<RepositoryError>)
   })
 
   it('clears the local API session even when remote logout is unavailable', async () => {

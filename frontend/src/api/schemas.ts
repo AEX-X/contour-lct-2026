@@ -210,6 +210,8 @@ export const riskSchema = z.object({
   threshold: z.number(),
   alert: z.boolean().nullable().optional(),
   model_threshold: z.number().nullable().optional(),
+  verdict: z.string().nullable().optional(),
+  blind_spots: z.array(z.string()).default([]),
   risk_level: z.enum(['low', 'medium', 'high', 'critical']),
   priority_score: z.number(),
   decision_status: z.enum(['open', 'acknowledged', 'confirmed', 'rejected', 'deferred', 'resolved']),
@@ -470,6 +472,85 @@ export const auditListSchema = z.object({
   meta: listMetaSchema,
 })
 
+const referenceOptionSchema = z.object({
+  id: z.string(),
+  display_name: z.string(),
+})
+
+export const referenceConfigSchema = z.object({
+  data: z.object({
+    sensor_states: z.array(z.string()),
+    sensor_types: z.array(referenceOptionSchema.extend({
+      system_type: z.string(),
+      value_type: z.enum(['numeric', 'categorical']),
+    })),
+    units: z.array(referenceOptionSchema.extend({ symbol: z.string() })),
+    risk_types: z.array(referenceOptionSchema),
+    risk_levels: z.array(referenceOptionSchema.extend({
+      min_probability: z.number(),
+      max_probability: z.number(),
+    })),
+    reject_reasons: z.array(referenceOptionSchema.extend({ requires_comment: z.boolean() })),
+    work_types: z.array(referenceOptionSchema),
+    work_order_statuses: z.array(referenceOptionSchema),
+    decision_statuses: z.array(referenceOptionSchema),
+    sla_params: z.array(z.object({
+      risk_level: z.string(),
+      response_minutes: z.number().int().nonnegative(),
+    })),
+    model_alert_rule: z.object({
+      applies_when: z.string(),
+      without_alert: z.string(),
+      medium: z.string(),
+      high_min_probability: z.number(),
+      sla_horizon_fraction: z.number(),
+      produces_critical: z.boolean(),
+      description: z.string(),
+    }),
+    freshness_boundaries: z.array(referenceOptionSchema.extend({
+      max_age_seconds: z.number().int().nonnegative().nullable(),
+    })),
+  }),
+  meta: z.object({ generated_at: isoDateTime }),
+})
+
+const modelQualityMetricsSchema = z.object({
+  precision: z.number(),
+  recall: z.number(),
+  f1: z.number(),
+  alerts: z.number().int().nonnegative(),
+  rows: z.number().int().nonnegative(),
+  base_rate: z.number(),
+})
+
+const modelQualitySectionSchema = z.object({
+  total: modelQualityMetricsSchema,
+  months: z.record(z.string(), modelQualityMetricsSchema),
+  alerts_per_day: z.object({
+    days: z.number().int().nonnegative(),
+    mean: z.number().nonnegative(),
+    median: z.number().nonnegative(),
+    max: z.number().nonnegative(),
+  }).optional(),
+  rule_alarm_24h: z.object({
+    total: modelQualityMetricsSchema,
+    months: z.record(z.string(), modelQualityMetricsSchema).optional(),
+  }).optional(),
+}).passthrough()
+
+export const modelQualitySchema = z.record(z.string(), modelQualitySectionSchema)
+
+export const sourceHealthSchema = z.object({
+  data: z.array(z.object({
+    source: z.string(),
+    display_name: z.string(),
+    status: z.enum(['online', 'delayed', 'unavailable']),
+    last_success_at: isoDateTime.nullable(),
+    delay_seconds: z.number().int().nonnegative().nullable(),
+  })),
+  meta: z.object({ generated_at: isoDateTime }),
+})
+
 export type ApiFacility = z.infer<typeof facilitySchema>
 export type ApiHierarchyNode = z.infer<typeof hierarchyNodeSchema>
 export type ApiLayout = z.infer<typeof layoutSchema>
@@ -484,3 +565,6 @@ export type ApiEngineerCandidate = z.infer<typeof engineerCandidateSchema>
 export type ApiNotification = z.infer<typeof notificationSchema>
 export type ApiFacilityAssignment = z.infer<typeof facilityAssignmentSchema>
 export type ApiAuditEntry = z.infer<typeof auditEntrySchema>
+export type ApiReferenceConfig = z.infer<typeof referenceConfigSchema>
+export type ApiModelQuality = z.infer<typeof modelQualitySchema>
+export type ApiSourceHealth = z.infer<typeof sourceHealthSchema>

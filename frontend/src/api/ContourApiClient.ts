@@ -34,6 +34,7 @@ function makeUrl(baseUrl: string, path: string, query?: Record<string, string | 
 function mapStatusCode(status: number, backendCode?: string) {
   const knownCodes = {
     VERSION_CONFLICT: 'VERSION_CONFLICT',
+    CONFLICT: 'VERSION_CONFLICT',
     INVALID_TRANSITION: 'INVALID_TRANSITION',
     ASSIGNMENT_CHANGED: 'ASSIGNMENT_CHANGED',
     ACCESS_EXPIRED: 'ACCESS_EXPIRED',
@@ -44,6 +45,7 @@ function mapStatusCode(status: number, backendCode?: string) {
     IDEMPOTENCY_KEY_REUSED: 'VALIDATION_ERROR',
     PERMISSION_DENIED: 'FORBIDDEN',
     FACILITY_ACCESS_DENIED: 'FORBIDDEN',
+    TOO_MANY_REQUESTS: 'TOO_MANY_REQUESTS',
   } as const
   if (backendCode && backendCode in knownCodes) {
     return knownCodes[backendCode as keyof typeof knownCodes]
@@ -52,8 +54,24 @@ function mapStatusCode(status: number, backendCode?: string) {
   if (status === 403) return 'FORBIDDEN' as const
   if (status === 404) return 'NOT_FOUND' as const
   if (status === 409) return 'VERSION_CONFLICT' as const
+  if (status === 429) return 'TOO_MANY_REQUESTS' as const
   if (status === 400 || status === 422) return 'VALIDATION_ERROR' as const
   return 'SOURCE_UNAVAILABLE' as const
+}
+
+function filenameFromContentDisposition(value: string | null) {
+  if (!value) return null
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(value)?.[1]
+  const plain = /filename="?([^";]+)"?/i.exec(value)?.[1]
+  let candidate = plain
+  if (encoded) {
+    try {
+      candidate = decodeURIComponent(encoded)
+    } catch {
+      candidate = encoded
+    }
+  }
+  return candidate?.replace(/[\\/]/g, '_').trim() || null
 }
 
 function mapFieldErrors(details: Record<string, unknown> | undefined) {
@@ -156,11 +174,47 @@ export class ContourApiClient {
     return this.request(makeUrl('', path, query), schema)
   }
 
+  async getPublic<T>(
+    path: string,
+    schema: z.ZodType<T>,
+    query?: Record<string, string | number | undefined>,
+  ) {
+    return this.request(makeUrl('', path, query), schema, {}, false)
+  }
+
+  async getWithHeaders<T>(
+    path: string,
+    schema: z.ZodType<T>,
+    query?: Record<string, string | number | undefined>,
+  ) {
+    const response = await this.requestResponse(makeUrl('', path, query))
+    return {
+      data: await this.parseJson(response, schema),
+      headers: response.headers,
+    }
+  }
+
   async post<T>(path: string, schema: z.ZodType<T>, body: unknown) {
     return this.request(path, schema, {
       method: 'POST',
       body: JSON.stringify(body),
     })
+  }
+
+  async download(
+    path: string,
+    query?: Record<string, string | number | undefined>,
+  ) {
+    const response = await this.requestResponse(makeUrl('', path, query), {
+      headers: {
+        Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, text/csv, application/octet-stream',
+      },
+    })
+    return {
+      blob: await response.blob(),
+      filename: filenameFromContentDisposition(response.headers.get('content-disposition')) ?? 'risks-report',
+      contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+    }
   }
 
   private async request<T>(
@@ -169,12 +223,21 @@ export class ContourApiClient {
     init: RequestInit = {},
     requiresAuth = true,
   ): Promise<T> {
+    const response = await this.requestResponse(path, init, requiresAuth)
+    return this.parseJson(response, schema)
+  }
+
+  private async requestResponse(
+    path: string,
+    init: RequestInit = {},
+    requiresAuth = true,
+  ): Promise<Response> {
     if (requiresAuth && !this.token) {
       throw new RepositoryError('AUTH_REQUIRED', 'Войди в backend, чтобы продолжить')
     }
 
     const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    const timeout = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     let response: Response
     try {
       response = await this.fetcher(makeUrl(this.baseUrl, path), {
@@ -183,7 +246,7 @@ export class ContourApiClient {
         headers: {
           Accept: 'application/json',
           ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+          ...(requiresAuth && this.token ? { Authorization: `Bearer ${this.token}` } : {}),
           ...init.headers,
         },
       })
@@ -193,7 +256,7 @@ export class ContourApiClient {
       }
       throw new RepositoryError('SOURCE_UNAVAILABLE', 'Не удалось подключиться к backend. Проверь адрес API, HTTPS и CORS')
     } finally {
-      window.clearTimeout(timeout)
+      globalThis.clearTimeout(timeout)
     }
 
     if (!response.ok) {
@@ -207,8 +270,16 @@ export class ContourApiClient {
         ? parsedError.data.error.message
         : `Backend вернул ошибку ${response.status}`
       const details = parsedError.success ? parsedError.data.error.details : undefined
+      const current = details?.current && typeof details.current === 'object'
+        ? details.current as Record<string, unknown>
+        : undefined
       const currentVersion = typeof details?.current_version === 'number'
         ? details.current_version
+        : typeof current?.version === 'number'
+          ? current.version
+          : undefined
+      const retryAfterSeconds = typeof details?.retry_after_seconds === 'number'
+        ? Math.max(0, details.retry_after_seconds)
         : undefined
       throw new RepositoryError(
         mapStatusCode(response.status, parsedError.success ? parsedError.data.error.code : undefined),
@@ -218,11 +289,17 @@ export class ContourApiClient {
           ? parsedError.data.error.trace_id
           : response.headers.get('x-trace-id') ?? undefined,
           currentVersion,
+          retryAfterSeconds,
+          details,
           fieldErrors: mapFieldErrors(details),
         },
       )
     }
 
+    return response
+  }
+
+  private async parseJson<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
     if (response.status === 204) return schema.parse(undefined)
     const payload = await response.json().catch(() => {
       throw new RepositoryError('SOURCE_UNAVAILABLE', 'Backend вернул некорректный JSON')

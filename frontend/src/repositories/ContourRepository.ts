@@ -12,10 +12,16 @@ import type {
   MutationMeta,
   Notification,
   RepositorySnapshot,
+  ReferenceConfig,
   RiskDecisionCommand,
   RiskForecast,
+  RiskRejectCommand,
+  RiskReportDownload,
+  RiskReportOptions,
   Sensor,
+  SourceHealthEntry,
   User,
+  ModelQualityReport,
   WorkOrder,
   WorkOrderActionCommand,
   WorkOrderActionResponse,
@@ -96,6 +102,8 @@ export interface ContourRepository {
   listRisks(params?: RiskListParams): Promise<RiskForecast[]>
   getRisk(riskId: string): Promise<RiskForecast>
   acknowledgeRisk?(riskId: string, command: RiskDecisionCommand): Promise<RiskForecast>
+  rejectRisk?(riskId: string, command: RiskRejectCommand): Promise<RiskForecast>
+  deferRisk?(riskId: string, command: RiskDecisionCommand): Promise<RiskForecast>
   confirmRisk(riskId: string, command: RiskDecisionCommand): Promise<{ risk: RiskForecast; incident: Incident; auditEventId: string }>
   listIncidents(facilityId?: string): Promise<Incident[]>
 
@@ -112,4 +120,8 @@ export interface ContourRepository {
   markNotificationRead(notificationId: string): Promise<Notification>
   getAuditTimeline(entityType: string, entityId: string): Promise<AuditEvent[]>
   getDashboardMetrics(): Promise<DashboardMetric[]>
+  getReferenceConfig?(): Promise<ReferenceConfig>
+  getModelQuality?(): Promise<ModelQualityReport>
+  exportRiskReport?(options: RiskReportOptions): Promise<RiskReportDownload>
+  getSourceHealth?(): Promise<SourceHealthEntry[]>
 }

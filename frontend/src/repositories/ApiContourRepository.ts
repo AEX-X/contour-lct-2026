@@ -13,15 +13,22 @@ import type {
   HierarchyNode,
   HierarchyNodeType,
   Incident,
+  ModelQualityMetrics,
+  ModelQualityReport,
   MutationMeta,
   Notification,
   RepositorySnapshot,
+  ReferenceConfig,
   RiskDecisionCommand,
   RiskForecast,
+  RiskRejectCommand,
+  RiskReportDownload,
+  RiskReportOptions,
   RiskSeverity,
   Sensor,
   SensorKind,
   SensorStatus,
+  SourceHealthEntry,
   User,
   WorkOrder,
   WorkOrderAction,
@@ -46,10 +53,13 @@ import {
   meSchema,
   notificationListSchema,
   notificationSchema,
+  modelQualitySchema,
+  referenceConfigSchema,
   riskListSchema,
   riskSchema,
   sensorListSchema,
   sensorSeriesSchema,
+  sourceHealthSchema,
   workOrderListSchema,
   workOrderActionResponseSchema,
   workOrderSchema,
@@ -61,9 +71,12 @@ import {
   type ApiHierarchyNode,
   type ApiLayout,
   type ApiNotification,
+  type ApiModelQuality,
+  type ApiReferenceConfig,
   type ApiRisk,
   type ApiSensorListItem,
   type ApiSensorSeries,
+  type ApiSourceHealth,
   type ApiWorkOrder,
 } from '../api/schemas'
 import type {
@@ -89,11 +102,17 @@ const apiOrganization = {
   type: 'moscollector' as const,
 }
 
-const riskTypeLabels: Record<string, string> = {
+const fallbackRiskTypeLabels: Record<string, string> = {
   sensor_failure: 'Риск отказа датчика или оборудования',
   fire: 'Риск пожара или задымления',
   flooding: 'Риск подтопления',
   unauthorized_access: 'Риск несанкционированного доступа',
+}
+
+const modelQualityLabels: Record<string, string> = {
+  incident: 'Риск инцидента',
+  failure: 'Риск неисправности',
+  neispraven: 'Риск неисправности',
 }
 
 const capabilityMap: Record<string, Capability[]> = {
@@ -161,6 +180,114 @@ function apiProvenance(
     asOf,
     note,
   }
+}
+
+function mapReferenceConfig(response: ApiReferenceConfig): ReferenceConfig {
+  const { data } = response
+  const mapOption = (item: { id: string; display_name: string }) => ({
+    id: item.id,
+    displayName: item.display_name,
+  })
+  return {
+    generatedAt: response.meta.generated_at,
+    sensorStates: data.sensor_states,
+    sensorTypes: data.sensor_types.map((item) => ({
+      ...mapOption(item),
+      systemType: item.system_type,
+      valueType: item.value_type,
+    })),
+    units: data.units.map((item) => ({ ...mapOption(item), symbol: item.symbol })),
+    riskTypes: data.risk_types.map(mapOption),
+    riskLevels: data.risk_levels.map((item) => ({
+      ...mapOption(item),
+      minProbability: item.min_probability,
+      maxProbability: item.max_probability,
+    })),
+    rejectReasons: data.reject_reasons.map((item) => ({
+      ...mapOption(item),
+      requiresComment: item.requires_comment,
+    })),
+    workTypes: data.work_types.map(mapOption),
+    workOrderStatuses: data.work_order_statuses.map(mapOption),
+    decisionStatuses: data.decision_statuses.map(mapOption),
+    slaParams: data.sla_params.map((item) => ({
+      riskLevel: item.risk_level,
+      responseMinutes: item.response_minutes,
+    })),
+    modelAlertRule: {
+      appliesWhen: data.model_alert_rule.applies_when,
+      withoutAlert: data.model_alert_rule.without_alert,
+      medium: data.model_alert_rule.medium,
+      highMinProbability: data.model_alert_rule.high_min_probability,
+      slaHorizonFraction: data.model_alert_rule.sla_horizon_fraction,
+      producesCritical: data.model_alert_rule.produces_critical,
+      description: data.model_alert_rule.description,
+    },
+    freshnessBoundaries: data.freshness_boundaries.map((item) => ({
+      ...mapOption(item),
+      maxAgeSeconds: item.max_age_seconds,
+    })),
+  }
+}
+
+function mapQualityMetrics(item: {
+  precision: number
+  recall: number
+  f1: number
+  alerts: number
+  rows: number
+  base_rate: number
+}): ModelQualityMetrics {
+  return {
+    precision: item.precision,
+    recall: item.recall,
+    f1: item.f1,
+    alerts: item.alerts,
+    rows: item.rows,
+    baseRate: item.base_rate,
+  }
+}
+
+function mapModelQuality(data: ApiModelQuality, source: string): ModelQualityReport {
+  const preferredOrder = ['incident', 'failure', 'neispraven']
+  const entries = Object.entries(data).sort(([left], [right]) => {
+    const leftIndex = preferredOrder.indexOf(left)
+    const rightIndex = preferredOrder.indexOf(right)
+    return (leftIndex === -1 ? preferredOrder.length : leftIndex)
+      - (rightIndex === -1 ? preferredOrder.length : rightIndex)
+  })
+  return {
+    source,
+    models: entries.map(([id, model]) => ({
+      id,
+      displayName: modelQualityLabels[id] ?? id,
+      total: mapQualityMetrics(model.total),
+      months: Object.entries(model.months)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([month, metrics]) => ({ month, metrics: mapQualityMetrics(metrics) })),
+      alertsPerDay: model.alerts_per_day
+        ? {
+            days: model.alerts_per_day.days,
+            mean: model.alerts_per_day.mean,
+            median: model.alerts_per_day.median,
+            max: model.alerts_per_day.max,
+          }
+        : null,
+      ruleBaseline: model.rule_alarm_24h
+        ? mapQualityMetrics(model.rule_alarm_24h.total)
+        : null,
+    })),
+  }
+}
+
+function mapSourceHealth(response: ApiSourceHealth): SourceHealthEntry[] {
+  return response.data.map((item) => ({
+    source: item.source,
+    displayName: item.display_name,
+    status: item.status,
+    lastSuccessAt: item.last_success_at,
+    delaySeconds: item.delay_seconds,
+  }))
 }
 
 function mapRole(role: string): DemoRole {
@@ -500,7 +627,7 @@ function mapPriorityToApi(value: WorkOrderPriority) {
   }[value]
 }
 
-function mapRisk(item: ApiRisk): RiskForecast {
+function mapRisk(item: ApiRisk, referenceConfig?: ReferenceConfig): RiskForecast {
   const facilityId = item.target.facility_id ?? (item.target.type === 'facility' ? item.target.id : 'unassigned')
   const status = mapRiskStatus(item.decision_status)
   return {
@@ -515,7 +642,11 @@ function mapRisk(item: ApiRisk): RiskForecast {
       hierarchyPath: [],
       locationSnapshot: { text: null, geo: null, planPosition: null },
     },
-    predictedEvent: riskTypeLabels[item.risk_type] ?? item.risk_type,
+    predictedEvent: referenceConfig?.riskTypes.find((type) => type.id === item.risk_type)?.displayName
+      ?? fallbackRiskTypeLabels[item.risk_type]
+      ?? item.risk_type,
+    verdict: item.verdict ?? null,
+    blindSpots: item.blind_spots,
     probability: item.probability,
     severity: mapRiskSeverity(item.risk_level),
     horizonHours: item.horizon_hours,
@@ -526,6 +657,8 @@ function mapRisk(item: ApiRisk): RiskForecast {
       direction: 'up' as const,
     })),
     recommendation: item.recommendation,
+    modelAlert: item.alert ?? null,
+    modelThreshold: item.model_threshold ?? null,
     modelAsOf: item.as_of,
     demoClock: item.demo_clock
       ? {
@@ -1109,12 +1242,15 @@ export class ApiContourRepository implements ContourRepository {
 
   async listRisks(params: RiskListParams = {}) {
     const risks = await this.cached(`risks:${params.facilityId ?? 'all'}`, async () => {
-      const items = await this.listAll((cursor) => this.client.get('/risks', riskListSchema, {
-        facility_id: params.facilityId,
-        cursor,
-        limit: 200,
-      }))
-      return items.map(mapRisk)
+      const [items, referenceConfig] = await Promise.all([
+        this.listAll((cursor) => this.client.get('/risks', riskListSchema, {
+          facility_id: params.facilityId,
+          cursor,
+          limit: 200,
+        })),
+        this.getReferenceConfig().catch(() => undefined),
+      ])
+      return items.map((item) => mapRisk(item, referenceConfig))
     })
     const severities = params.severity
       ? new Set(Array.isArray(params.severity) ? params.severity : [params.severity])
@@ -1126,17 +1262,39 @@ export class ApiContourRepository implements ContourRepository {
   }
 
   async getRisk(riskId: string) {
-    return mapRisk(await this.client.get(`/risks/${encodeURIComponent(riskId)}`, riskSchema))
+    const [risk, referenceConfig] = await Promise.all([
+      this.client.get(`/risks/${encodeURIComponent(riskId)}`, riskSchema),
+      this.getReferenceConfig().catch(() => undefined),
+    ])
+    return mapRisk(risk, referenceConfig)
   }
 
   async acknowledgeRisk(riskId: string, command: RiskDecisionCommand) {
-    const updated = await this.client.post(
-      `/risks/${encodeURIComponent(riskId)}/acknowledge`,
-      riskSchema,
+    return this.applyRiskDecision(
+      riskId,
+      'acknowledge',
       { expected_version: command.expectedVersion },
     )
-    this.clearCache('risks:')
-    return mapRisk(updated)
+  }
+
+  async rejectRisk(riskId: string, command: RiskRejectCommand) {
+    return this.applyRiskDecision(
+      riskId,
+      'reject',
+      {
+        expected_version: command.expectedVersion,
+        reason_code: command.reasonCode,
+        comment: command.comment.trim() || null,
+      },
+    )
+  }
+
+  async deferRisk(riskId: string, command: RiskDecisionCommand) {
+    return this.applyRiskDecision(
+      riskId,
+      'defer',
+      { expected_version: command.expectedVersion },
+    )
   }
 
   async confirmRisk(
@@ -1376,6 +1534,61 @@ export class ApiContourRepository implements ContourRepository {
       provenance: apiProvenance('derived', 'Расчёт Contour по данным backend', now),
       drilldown: { route: item.route, filters: {} },
     }))
+  }
+
+  async getReferenceConfig(): Promise<ReferenceConfig> {
+    return this.cached('reference-config', async () => mapReferenceConfig(
+      await this.client.getPublic('/config', referenceConfigSchema),
+    ), 5 * 60_000)
+  }
+
+  async getModelQuality(): Promise<ModelQualityReport> {
+    const response = await this.client.getWithHeaders('/model-quality', modelQualitySchema)
+    return mapModelQuality(response.data, response.headers.get('x-data-source') ?? 'unknown')
+  }
+
+  async exportRiskReport(options: RiskReportOptions): Promise<RiskReportDownload> {
+    return this.client.download('/reports/risks', {
+      from: options.from,
+      to: options.to,
+      format: options.format,
+    })
+  }
+
+  async getSourceHealth(): Promise<SourceHealthEntry[]> {
+    const response = await this.client.get('/system/source-health', sourceHealthSchema)
+    return mapSourceHealth(response)
+  }
+
+  private async applyRiskDecision(
+    riskId: string,
+    action: 'acknowledge' | 'reject' | 'defer',
+    body: Record<string, unknown>,
+  ): Promise<RiskForecast> {
+    try {
+      const updated = await this.client.post(
+        `/risks/${encodeURIComponent(riskId)}/${action}`,
+        riskSchema,
+        body,
+      )
+      this.clearCache('risks:')
+      const referenceConfig = await this.getReferenceConfig().catch(() => undefined)
+      return mapRisk(updated, referenceConfig)
+    } catch (error) {
+      if (!(error instanceof RepositoryError) || error.code !== 'VERSION_CONFLICT') throw error
+      const currentPayload = error.details.current
+      const parsedCurrent = riskSchema.safeParse(currentPayload)
+      if (!parsedCurrent.success) throw error
+      const referenceConfig = await this.getReferenceConfig().catch(() => undefined)
+      throw new RepositoryError(error.code, error.message, {
+        correlationId: error.correlationId,
+        currentVersion: error.currentVersion,
+        currentRisk: mapRisk(parsedCurrent.data, referenceConfig),
+        retryAfterSeconds: error.retryAfterSeconds,
+        details: error.details,
+        fieldErrors: error.fieldErrors,
+      })
+    }
   }
 
   private async listAll<T>(
