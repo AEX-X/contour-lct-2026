@@ -46,6 +46,8 @@ def to_risk_out(risk: Risk) -> RiskOut:
         threshold=risk.threshold,
         alert=risk.alert,
         model_threshold=risk.model_threshold,
+        verdict=risk.verdict,
+        blind_spots=list(risk.blind_spots or []),
         risk_level=risk.risk_level,
         priority_score=risk.priority_score,
         decision_status=risk.decision_status,

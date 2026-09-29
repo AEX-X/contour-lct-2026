@@ -47,6 +47,9 @@ class Risk(Base):
     # Model-side alert and its threshold; None when the model did not send them (shared scale).
     alert: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     model_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # From the ML object models: one sentence for the dispatcher and what the model cannot see.
+    verdict: Mapped[str | None] = mapped_column(String, nullable=True)
+    blind_spots: Mapped[list] = mapped_column(JSON, default=list)
     risk_level: Mapped[str] = mapped_column(String, index=True)
     priority_score: Mapped[float] = mapped_column(Float, index=True)
     decision_status: Mapped[str] = mapped_column(String, default="open", index=True)

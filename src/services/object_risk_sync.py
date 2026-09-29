@@ -13,6 +13,7 @@ model-alert rule (`assess_forecast`): "medium", or "high" from 0.85, never
 failures) instead of the 15 minutes the shared scale gave to multi-day forecasts.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -48,6 +49,8 @@ _SYSTEM_TYPE_BY_SENSOR_NAME = {
 }
 _DEFAULT_INCIDENT_RISK_TYPE = "unauthorized_access"
 
+logger = logging.getLogger(__name__)
+
 
 class ObjectRiskError(Exception):
     """The ML service's /risk_map could not be used (unreachable, non-200 or malformed)."""
@@ -59,6 +62,31 @@ class _RiskMap:
     objects: list[dict]
     effective_as_of: datetime
     demo_clock: DemoClock | None
+
+
+def card_fields(row: dict) -> tuple[str | None, list[str]]:
+    """Read the optional dispatcher texts of a /risk_map row: verdict and blind_spots.
+
+    They only explain the forecast, so a malformed value is dropped with a
+    warning instead of rejecting the row (the forecast itself is still valid).
+
+    Args:
+        row: One decoded /risk_map object row.
+
+    Returns:
+        (verdict or None, blind_spots or an empty list).
+    """
+    verdict = row.get("verdict")
+    if verdict is not None and not isinstance(verdict, str):
+        logger.warning("risk_map row %s: verdict is not a string, ignored: %r", row.get("object_id"), verdict)
+        verdict = None
+    blind_spots = row.get("blind_spots")
+    if blind_spots is None:
+        blind_spots = []
+    elif not isinstance(blind_spots, list) or not all(isinstance(item, str) for item in blind_spots):
+        logger.warning("risk_map row %s: blind_spots is not a list of strings, ignored: %r", row.get("object_id"), blind_spots)
+        blind_spots = []
+    return verdict, list(blind_spots)
 
 
 def incident_risk_type(suspect_channels: list[dict]) -> str:
@@ -168,6 +196,8 @@ class _AlertRow:
     factor_texts: list[str]
     suspects: list[dict]
     effective_as_of: datetime
+    verdict: str | None
+    blind_spots: list[str]
 
 
 def _parse_alert_row(row: dict, default_as_of: datetime) -> _AlertRow:
@@ -179,6 +209,7 @@ def _parse_alert_row(row: dict, default_as_of: datetime) -> _AlertRow:
             _, model_threshold, _ = parse_model_alert_fields(
                 {"model_threshold": row.get("threshold")}
             )
+        verdict, blind_spots = card_fields(row)
         return _AlertRow(
             facility_id=f"fac_{row['object_id']}",
             model_name=str(row["model_name"]),
@@ -193,6 +224,8 @@ def _parse_alert_row(row: dict, default_as_of: datetime) -> _AlertRow:
                 if row.get("as_of_utc") is not None
                 else default_as_of
             ),
+            verdict=verdict,
+            blind_spots=blind_spots,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ObjectRiskError(f"malformed risk_map row: {row!r}") from exc
@@ -282,6 +315,8 @@ async def sync_object_risks(
                     threshold=threshold,
                     alert=True,
                     model_threshold=parsed.model_threshold,
+                    verdict=parsed.verdict,
+                    blind_spots=parsed.blind_spots,
                     risk_level=risk_level,
                     priority_score=compute_priority_score(
                         probability, now, sla_due_at, now=now
